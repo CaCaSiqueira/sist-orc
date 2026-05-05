@@ -49,17 +49,27 @@ def _get_url() -> str:
     return f"sqlite:///{local_db}"
 
 
-def _ipv4_connect_args(url: str) -> dict:
-    """Resolve host para IPv4 explícito — evita falha por IPv6 no Streamlit Cloud."""
-    args = {"sslmode": "require"}
+def _pg_connect_args(url: str) -> dict:
+    """Monta connect_args para PostgreSQL:
+    - Resolve hostname para IPv4 (evita falha IPv6 no Streamlit Cloud)
+    - Usa sslmode=disable para poolers (Supavisor não aceita SSL direto)
+    - Usa sslmode=require para conexão direta
+    """
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+    is_pooler = "pooler.supabase.com" in hostname
+
+    args = {"sslmode": "disable" if is_pooler else "require"}
+
+    # força IPv4
     try:
-        hostname = urlparse(url).hostname or ""
         if hostname:
-            ipv4_results = socket.getaddrinfo(hostname, 5432, socket.AF_INET)
-            if ipv4_results:
-                args["hostaddr"] = ipv4_results[0][4][0]
+            ipv4 = socket.getaddrinfo(hostname, parsed.port or 5432, socket.AF_INET)
+            if ipv4:
+                args["hostaddr"] = ipv4[0][4][0]
     except Exception:
         pass
+
     return args
 
 
@@ -71,7 +81,7 @@ def get_engine():
             _engine = create_engine(
                 url,
                 pool_pre_ping=True,
-                connect_args=_ipv4_connect_args(url),
+                connect_args=_pg_connect_args(url),
             )
         else:
             _engine = create_engine(url, pool_pre_ping=True)
