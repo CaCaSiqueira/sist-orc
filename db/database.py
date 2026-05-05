@@ -1,4 +1,6 @@
 import os
+import socket
+from urllib.parse import urlparse
 from sqlalchemy import create_engine, text
 
 _engine = None
@@ -47,6 +49,20 @@ def _get_url() -> str:
     return f"sqlite:///{local_db}"
 
 
+def _ipv4_connect_args(url: str) -> dict:
+    """Resolve host para IPv4 explícito — evita falha por IPv6 no Streamlit Cloud."""
+    args = {"sslmode": "require"}
+    try:
+        hostname = urlparse(url).hostname or ""
+        if hostname:
+            ipv4_results = socket.getaddrinfo(hostname, 5432, socket.AF_INET)
+            if ipv4_results:
+                args["hostaddr"] = ipv4_results[0][4][0]
+    except Exception:
+        pass
+    return args
+
+
 def get_engine():
     global _engine
     if _engine is None:
@@ -55,7 +71,7 @@ def get_engine():
             _engine = create_engine(
                 url,
                 pool_pre_ping=True,
-                connect_args={"sslmode": "require"},
+                connect_args=_ipv4_connect_args(url),
             )
         else:
             _engine = create_engine(url, pool_pre_ping=True)
