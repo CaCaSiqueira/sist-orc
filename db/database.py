@@ -51,7 +51,6 @@ def get_engine():
     global _engine
     if _engine is None:
         _engine = create_engine(_get_url(), pool_pre_ping=True)
-        init_db()  # garante schema atualizado na primeira conexão de qualquer página
     return _engine
 
 
