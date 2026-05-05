@@ -195,15 +195,19 @@ def init_db():
             )
         """))
 
-        for col_ddl in [
-            "ALTER TABLE categorias ADD COLUMN parent_id INTEGER REFERENCES categorias(id)",
-            "ALTER TABLE categorias ADD COLUMN natureza TEXT DEFAULT 'nao_classificado'",
-        ]:
-            try:
-                conn.execute(text(col_ddl))
-            except Exception:
-                pass  # coluna já existe
+    # ALTER TABLE em transações separadas — no PostgreSQL um ALTER que falha
+    # (coluna já existe) aborta a transação inteira se estiver junto com outros comandos.
+    for col_ddl in [
+        "ALTER TABLE categorias ADD COLUMN parent_id INTEGER REFERENCES categorias(id)",
+        "ALTER TABLE categorias ADD COLUMN natureza TEXT DEFAULT 'nao_classificado'",
+    ]:
+        try:
+            with engine.begin() as _conn:
+                _conn.execute(text(col_ddl))
+        except Exception:
+            pass  # coluna já existe — ignorar
 
+    with engine.begin() as conn:
         for nome, tipo, cor, natureza in DEFAULT_CATEGORIES:
             conn.execute(text(
                 "INSERT INTO categorias (nome, tipo, cor, natureza) VALUES (:nome, :tipo, :cor, :natureza) "
