@@ -50,7 +50,15 @@ def _get_url() -> str:
 def get_engine():
     global _engine
     if _engine is None:
-        _engine = create_engine(_get_url(), pool_pre_ping=True)
+        url = _get_url()
+        if url.startswith("postgresql"):
+            _engine = create_engine(
+                url,
+                pool_pre_ping=True,
+                connect_args={"sslmode": "require"},
+            )
+        else:
+            _engine = create_engine(url, pool_pre_ping=True)
     return _engine
 
 
