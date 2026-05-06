@@ -37,4 +37,4 @@ def _show_login_page():
         st.markdown("---")
         st.markdown("### Faça login para continuar")
         if st.button("🔐 Entrar com Google", type="primary", use_container_width=True):
-            st.login("google")
+            st.login()
