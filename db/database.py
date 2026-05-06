@@ -25,7 +25,6 @@ _PLACEHOLDER_HOSTS = {"SEU-HOST", "[SEU-HOST]", "localhost_placeholder"}
 
 
 def _get_url() -> str:
-    """Retorna a URL do banco. Usa SQLite como fallback quando Supabase não está configurado."""
     raw = ""
     try:
         import streamlit as st
@@ -35,13 +34,11 @@ def _get_url() -> str:
     if not raw:
         raw = os.environ.get("DATABASE_URL", "")
 
-    # Verifica se é um placeholder ou URL inválida
     if raw and raw.startswith("postgresql://"):
         host = raw.split("@")[-1].split(":")[0].split("/")[0]
         if host not in _PLACEHOLDER_HOSTS and "[" not in host:
-            return raw  # URL real do Supabase
+            return raw
 
-    # Fallback: SQLite local
     local_db = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "data", "orcamento.db")
     )
@@ -50,18 +47,10 @@ def _get_url() -> str:
 
 
 def _pg_connect_args(url: str) -> dict:
-    """Monta connect_args para PostgreSQL:
-    - Resolve hostname para IPv4 (evita falha IPv6 no Streamlit Cloud)
-    - Usa sslmode=disable para poolers (Supavisor não aceita SSL direto)
-    - Usa sslmode=require para conexão direta
-    """
     parsed = urlparse(url)
     hostname = parsed.hostname or ""
     is_pooler = "pooler.supabase.com" in hostname
-
     args = {"sslmode": "disable" if is_pooler else "require"}
-
-    # força IPv4
     try:
         if hostname:
             ipv4 = socket.getaddrinfo(hostname, parsed.port or 5432, socket.AF_INET)
@@ -69,7 +58,6 @@ def _pg_connect_args(url: str) -> dict:
                 args["hostaddr"] = ipv4[0][4][0]
     except Exception:
         pass
-
     return args
 
 
@@ -89,7 +77,7 @@ def get_engine():
 
 
 def dialect() -> str:
-    return get_engine().dialect.name  # 'sqlite' ou 'postgresql'
+    return get_engine().dialect.name
 
 
 def _pk() -> str:
@@ -103,15 +91,18 @@ def _ts() -> str:
 def init_db():
     pk, ts = _pk(), _ts()
     engine = get_engine()
+
+    # ── Cria tabelas ──────────────────────────────────────────────────────────
     with engine.begin() as conn:
         conn.execute(text(f"""
             CREATE TABLE IF NOT EXISTS categorias (
                 id {pk},
-                nome TEXT NOT NULL UNIQUE,
+                nome TEXT NOT NULL,
                 tipo TEXT NOT NULL CHECK(tipo IN ('despesa', 'receita')),
                 cor TEXT DEFAULT '#888888',
                 parent_id INTEGER REFERENCES categorias(id) ON DELETE SET NULL,
-                natureza TEXT DEFAULT 'nao_classificado'
+                natureza TEXT DEFAULT 'nao_classificado',
+                user_id TEXT NOT NULL DEFAULT 'default'
             )
         """))
         conn.execute(text(f"""
@@ -119,7 +110,8 @@ def init_db():
                 id {pk},
                 nome TEXT NOT NULL,
                 banco TEXT NOT NULL,
-                tipo TEXT NOT NULL
+                tipo TEXT NOT NULL,
+                user_id TEXT NOT NULL DEFAULT 'default'
             )
         """))
         conn.execute(text(f"""
@@ -133,6 +125,7 @@ def init_db():
                 conta_id INTEGER REFERENCES contas(id),
                 observacao TEXT,
                 importacao_id INTEGER,
+                user_id TEXT NOT NULL DEFAULT 'default',
                 criado_em {ts} DEFAULT CURRENT_TIMESTAMP
             )
         """))
@@ -142,6 +135,7 @@ def init_db():
                 arquivo TEXT NOT NULL,
                 banco TEXT NOT NULL,
                 total_transacoes INTEGER,
+                user_id TEXT NOT NULL DEFAULT 'default',
                 importado_em {ts} DEFAULT CURRENT_TIMESTAMP
             )
         """))
@@ -157,6 +151,7 @@ def init_db():
                 categoria_id INTEGER REFERENCES categorias(id),
                 conta_id INTEGER REFERENCES contas(id),
                 observacao TEXT,
+                user_id TEXT NOT NULL DEFAULT 'default',
                 criado_em {ts} DEFAULT CURRENT_TIMESTAMP
             )
         """))
@@ -173,6 +168,7 @@ def init_db():
                 rentabilidade_esperada NUMERIC,
                 ativo INTEGER DEFAULT 1,
                 observacao TEXT,
+                user_id TEXT NOT NULL DEFAULT 'default',
                 criado_em {ts} DEFAULT CURRENT_TIMESTAMP
             )
         """))
@@ -195,21 +191,62 @@ def init_db():
             )
         """))
 
-    # ALTER TABLE em transações separadas — no PostgreSQL um ALTER que falha
-    # (coluna já existe) aborta a transação inteira se estiver junto com outros comandos.
-    for col_ddl in [
+    # ── Migrações de colunas (cada ALTER em transação isolada) ────────────────
+    migrations = [
         "ALTER TABLE categorias ADD COLUMN parent_id INTEGER REFERENCES categorias(id)",
         "ALTER TABLE categorias ADD COLUMN natureza TEXT DEFAULT 'nao_classificado'",
-    ]:
+        "ALTER TABLE categorias ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'",
+        "ALTER TABLE contas ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'",
+        "ALTER TABLE transacoes ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'",
+        "ALTER TABLE importacoes ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'",
+        "ALTER TABLE parcelamentos ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'",
+        "ALTER TABLE investimentos ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'",
+    ]
+    for ddl in migrations:
         try:
             with engine.begin() as _conn:
-                _conn.execute(text(col_ddl))
+                _conn.execute(text(ddl))
         except Exception:
-            pass  # coluna já existe — ignorar
+            pass  # coluna já existe
 
+    # ── PostgreSQL: migra UNIQUE(nome) → UNIQUE(nome, user_id) ───────────────
+    if dialect() == "postgresql":
+        for ddl in [
+            "ALTER TABLE categorias DROP CONSTRAINT IF EXISTS categorias_nome_key",
+            "ALTER TABLE categorias ADD CONSTRAINT categorias_nome_user_uq UNIQUE(nome, user_id)",
+        ]:
+            try:
+                with engine.begin() as _conn:
+                    _conn.execute(text(ddl))
+            except Exception:
+                pass  # constraint já migrada
+
+    # ── Categorias padrão para o usuário 'default' (banco local/legado) ───────
     with engine.begin() as conn:
-        for nome, tipo, cor, natureza in DEFAULT_CATEGORIES:
-            conn.execute(text(
-                "INSERT INTO categorias (nome, tipo, cor, natureza) VALUES (:nome, :tipo, :cor, :natureza) "
-                "ON CONFLICT (nome) DO NOTHING"
-            ), {"nome": nome, "tipo": tipo, "cor": cor, "natureza": natureza})
+        result = conn.execute(text(
+            "SELECT COUNT(*) FROM categorias WHERE user_id = 'default'"
+        ))
+        if result.scalar() == 0:
+            for nome, tipo, cor, natureza in DEFAULT_CATEGORIES:
+                conn.execute(text(
+                    "INSERT INTO categorias (nome, tipo, cor, natureza, user_id) "
+                    "VALUES (:nome, :tipo, :cor, :natureza, 'default')"
+                ), {"nome": nome, "tipo": tipo, "cor": cor, "natureza": natureza})
+
+
+def init_user(user_id: str):
+    """Cria categorias padrão para um novo usuário (idempotente)."""
+    if not user_id or user_id == "default":
+        return
+    engine = get_engine()
+    with engine.begin() as conn:
+        result = conn.execute(
+            text("SELECT COUNT(*) FROM categorias WHERE user_id = :uid"),
+            {"uid": user_id},
+        )
+        if result.scalar() == 0:
+            for nome, tipo, cor, natureza in DEFAULT_CATEGORIES:
+                conn.execute(text(
+                    "INSERT INTO categorias (nome, tipo, cor, natureza, user_id) "
+                    "VALUES (:nome, :tipo, :cor, :natureza, :uid)"
+                ), {"nome": nome, "tipo": tipo, "cor": cor, "natureza": natureza, "uid": user_id})

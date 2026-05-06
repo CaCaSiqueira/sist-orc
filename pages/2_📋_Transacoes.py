@@ -1,16 +1,20 @@
 import streamlit as st
 import pandas as pd
+from auth import require_login, sidebar_user
 from db.queries import (
     listar_transacoes, listar_categorias, opcoes_categoria,
     listar_contas, atualizar_transacao, excluir_transacao,
 )
 
 st.set_page_config(page_title="Transações", page_icon="📋", layout="wide")
+uid = require_login()
+sidebar_user()
+
 st.title("📋 Transações")
 
-cats_df = listar_categorias()
-contas_df = listar_contas()
-todas_labels, cat_label_to_id = opcoes_categoria()
+cats_df = listar_categorias(user_id=uid)
+contas_df = listar_contas(user_id=uid)
+todas_labels, cat_label_to_id = opcoes_categoria(user_id=uid)
 
 # ── Filtros ──────────────────────────────────────────────────────────────────
 with st.expander("🔍 Filtros", expanded=True):
@@ -35,7 +39,7 @@ if tipo_f != "Todos":
 if cat_f != "Todas":
     filtros["categoria_id"] = cat_label_to_id.get(cat_f)
 
-df = listar_transacoes(filtros)
+df = listar_transacoes(filtros, user_id=uid)
 
 if df.empty:
     st.info("Nenhuma transação encontrada com os filtros aplicados.")

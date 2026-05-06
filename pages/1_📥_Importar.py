@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from auth import require_login, sidebar_user
 from db.queries import (
     listar_categorias, get_ou_criar_conta,
     registrar_importacao, inserir_transacoes,
@@ -8,6 +9,9 @@ from db.queries import (
 from parsers import nubank, mercado_pago, banco_brasil
 
 st.set_page_config(page_title="Importar Extrato", page_icon="📥", layout="wide")
+uid = require_login()
+sidebar_user()
+
 st.title("📥 Importar Extrato")
 
 BANCOS = {
@@ -31,7 +35,7 @@ uploaded = st.file_uploader(
 if not uploaded:
     st.stop()
 
-# ── Parse do arquivo (só quando arquivo muda) ─────────────────────────────────
+# ── Parse do arquivo ──────────────────────────────────────────────────────────
 file_key = f"{uploaded.name}_{uploaded.size}"
 if st.session_state.get("_imp_file_key") != file_key:
     with st.spinner("Lendo arquivo..."):
@@ -40,9 +44,9 @@ if st.session_state.get("_imp_file_key") != file_key:
         except Exception as e:
             st.error(f"Erro ao ler o arquivo: {e}")
             st.stop()
-    st.session_state["_imp_file_key"]    = file_key
-    st.session_state["_imp_df_parsed"]   = df_parsed
-    st.session_state["_imp_rows"]        = None  # força rebuild
+    st.session_state["_imp_file_key"]  = file_key
+    st.session_state["_imp_df_parsed"] = df_parsed
+    st.session_state["_imp_rows"]      = None
 else:
     df_parsed = st.session_state["_imp_df_parsed"]
 
@@ -51,13 +55,11 @@ st.success(f"{len(df_parsed)} transações encontradas.")
 
 # ── Helpers de categorias ─────────────────────────────────────────────────────
 def _build_cat_maps():
-    """Retorna mapas para as colunas Categoria e Subcategoria."""
-    cats = listar_categorias()
+    cats = listar_categorias(user_id=uid)
     pais   = cats[cats["parent_id"].isna()]
     filhos = cats[cats["parent_id"].notna()]
     pai_nome = dict(zip(cats["id"], cats["nome"]))
 
-    # Categoria: apenas categorias pai, por tipo
     def _labels_pais(tipo):
         df = pais[pais["tipo"] == tipo].sort_values("nome")
         labels = df["nome"].tolist()
@@ -69,7 +71,6 @@ def _build_cat_maps():
     labels_cat_all = sorted(set(labels_cat_desp + labels_cat_rec))
     id_cat_all     = {**id_cat_desp, **id_cat_rec}
 
-    # Subcategoria: "Pai › Filho", por tipo, mais "(nenhuma)"
     def _labels_subs(tipo):
         df = filhos[filhos["tipo"] == tipo].sort_values("nome")
         labels = [SUB_NONE]
@@ -86,7 +87,6 @@ def _build_cat_maps():
     labels_sub_all = [SUB_NONE] + labels_sub_all
     id_sub_all     = {**id_sub_desp, **id_sub_rec}
 
-    # Natureza por nome de categoria
     nat_map = dict(zip(cats["nome"], cats["natureza"].fillna("nao_classificado")))
 
     return (
@@ -104,7 +104,7 @@ def _build_cat_maps():
 
 # ── Criar categoria sem sair da importação ────────────────────────────────────
 with st.expander("➕ Criar nova categoria", expanded=False):
-    st.caption("A nova categoria aparece imediatamente nas colunas abaixo — suas edições da tabela são preservadas.")
+    st.caption("A nova categoria aparece imediatamente nas colunas abaixo.")
     with st.form("form_nova_cat_import", clear_on_submit=True):
         c1, c2, c3, c4 = st.columns([3, 2, 2, 1])
         novo_nome = c1.text_input("Nome *")
@@ -113,8 +113,7 @@ with st.expander("➕ Criar nova categoria", expanded=False):
         nova_cor  = c4.color_picker("Cor", "#888888")
 
         opts_pai = ["(categoria principal)"] + cats_df["nome"].tolist()
-        pai_sel  = st.selectbox("Subcategoria de", opts_pai,
-                                help="Deixe em '(categoria principal)' para criar categoria raiz.")
+        pai_sel  = st.selectbox("Subcategoria de", opts_pai)
 
         if st.form_submit_button("✅ Criar", type="primary"):
             if not novo_nome.strip():
@@ -126,12 +125,13 @@ with st.expander("➕ Criar nova categoria", expanded=False):
                     if not m.empty:
                         parent_id  = int(m.iloc[0]["id"])
                         tipo_final = m.iloc[0]["tipo"]
-                criar_categoria(novo_nome.strip(), tipo_final, nova_cor, parent_id=parent_id, natureza=nova_nat)
+                criar_categoria(novo_nome.strip(), tipo_final, nova_cor,
+                                parent_id=parent_id, natureza=nova_nat, user_id=uid)
                 st.success(f"Categoria **{novo_nome}** criada!")
                 st.rerun()
 
 
-# ── Monta linhas (apenas 1ª vez ou após limpar) ───────────────────────────────
+# ── Monta linhas ──────────────────────────────────────────────────────────────
 if st.session_state.get("_imp_rows") is None:
     linhas = []
     for _, row in df_parsed.iterrows():
@@ -153,21 +153,20 @@ if st.session_state.get("_imp_rows") is None:
     st.session_state["_imp_rows"] = linhas
 
 
-# ── Cabeçalho da tabela com botão Limpar ─────────────────────────────────────
+# ── Cabeçalho ────────────────────────────────────────────────────────────────
 col_titulo, col_remover, col_limpar = st.columns([5, 1, 1])
 col_titulo.subheader("Revise e categorize as transações")
-if col_remover.button("✂️ Remover desmarcadas", help="Exclui da tabela as linhas com ✓ desmarcado"):
+if col_remover.button("✂️ Remover desmarcadas"):
     rows_atuais = st.session_state.get("_imp_rows") or []
     st.session_state["_imp_rows"] = [r for r in rows_atuais if r.get("incluir", True)]
     st.rerun()
-if col_limpar.button("🔄 Restaurar", help="Volta todas as linhas ao estado inicial do arquivo"):
+if col_limpar.button("🔄 Restaurar"):
     st.session_state["_imp_rows"] = None
     st.rerun()
 
 st.caption(
     "💡 **Categoria**: selecione a principal. "
-    "**Subcategoria**: digite o nome — se já existir é usada, se for novo é criada automaticamente "
-    "como subcategoria da categoria escolhida."
+    "**Subcategoria**: digite o nome — se já existir é usada, se for novo é criada automaticamente."
 )
 
 edited = st.data_editor(
@@ -178,20 +177,9 @@ edited = st.data_editor(
         "descricao":    st.column_config.TextColumn("Descrição", width="large"),
         "valor":        st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
         "tipo":         st.column_config.SelectboxColumn("Tipo", options=["despesa", "receita"]),
-        "categoria":    st.column_config.SelectboxColumn(
-            "Categoria",
-            options=labels_cat_all,
-            help="Categoria principal — digite para filtrar",
-        ),
-        "subcategoria": st.column_config.TextColumn(
-            "Subcategoria",
-            help="Digite o nome: existente → usa · novo → cria sob a Categoria escolhida",
-        ),
-        "natureza":     st.column_config.SelectboxColumn(
-            "Natureza",
-            options=NATUREZA_OPTS,
-            help="Fixo = recorrente · Variável = oscila",
-        ),
+        "categoria":    st.column_config.SelectboxColumn("Categoria", options=labels_cat_all),
+        "subcategoria": st.column_config.TextColumn("Subcategoria"),
+        "natureza":     st.column_config.SelectboxColumn("Natureza", options=NATUREZA_OPTS),
         "_banco":      None,
         "_conta_nome": None,
         "_conta_tipo": None,
@@ -201,7 +189,6 @@ edited = st.data_editor(
     num_rows="dynamic",
 )
 
-# persiste edições para sobreviver ao rerun de criar categoria
 st.session_state["_imp_rows"] = edited.to_dict("records")
 
 selecionadas = edited[edited["incluir"] == True]
@@ -210,14 +197,12 @@ st.caption(f"{len(selecionadas)} de {len(edited)} transações selecionadas.")
 
 # ── Salvar ────────────────────────────────────────────────────────────────────
 if st.button("💾 Salvar transações selecionadas", type="primary", disabled=len(selecionadas) == 0):
-    imp_id = registrar_importacao(uploaded.name, banco_key, len(selecionadas))
+    imp_id = registrar_importacao(uploaded.name, banco_key, len(selecionadas), user_id=uid)
 
-    # cache de subcategorias criadas nesta sessão de importação: nome_lower → id
     sub_cache: dict = {}
-    # mapa nome_lower → id para subcategorias já existentes
     sub_existentes = {
         s["nome"].strip().lower(): int(s["id"])
-        for _, s in listar_categorias().iterrows()
+        for _, s in listar_categorias(user_id=uid).iterrows()
         if s["parent_id"] is not None and not pd.isna(s["parent_id"])
     }
 
@@ -226,9 +211,8 @@ if st.button("💾 Salvar transações selecionadas", type="primary", disabled=l
     novas_criadas = 0
 
     for _, row in selecionadas.iterrows():
-        conta_id = get_ou_criar_conta(row["_conta_nome"], row["_banco"], row["_conta_tipo"])
+        conta_id = get_ou_criar_conta(row["_conta_nome"], row["_banco"], row["_conta_tipo"], user_id=uid)
         nat      = row.get("natureza") or "nao_classificado"
-
         sub_texto = str(row.get("subcategoria") or "").strip()
         cat_nome  = row.get("categoria") or ""
         cat_id    = id_cat_all.get(cat_nome)
@@ -236,18 +220,15 @@ if st.button("💾 Salvar transações selecionadas", type="primary", disabled=l
         if sub_texto:
             chave = sub_texto.lower()
             if chave in sub_cache:
-                # já criada nesta importação
                 cat_id = sub_cache[chave]
             elif chave in sub_existentes:
-                # já existe no banco
                 cat_id = sub_existentes[chave]
             elif cat_id:
-                # nova: cria como subcategoria da categoria selecionada
                 tipo_pai = cats_df[cats_df["nome"] == cat_nome]["tipo"].values
                 tipo_pai = tipo_pai[0] if len(tipo_pai) else "despesa"
-                criar_categoria(sub_texto, tipo_pai, "#888888", parent_id=cat_id, natureza=nat)
-                # busca o id recém-criado
-                cats_fresh = listar_categorias()
+                criar_categoria(sub_texto, tipo_pai, "#888888",
+                                parent_id=cat_id, natureza=nat, user_id=uid)
+                cats_fresh = listar_categorias(user_id=uid)
                 novo = cats_fresh[cats_fresh["nome"].str.lower() == chave]
                 if not novo.empty:
                     novo_id = int(novo.iloc[0]["id"])
@@ -258,7 +239,7 @@ if st.button("💾 Salvar transações selecionadas", type="primary", disabled=l
 
         if cat_id and cat_id not in nat_atualizada:
             nat_atualizada[cat_id] = nat
-            atualizar_natureza_categoria(cat_id, nat)
+            atualizar_natureza_categoria(cat_id, nat, user_id=uid)
 
         registros.append({
             "data":          str(row["data"])[:10],
@@ -271,12 +252,12 @@ if st.button("💾 Salvar transações selecionadas", type="primary", disabled=l
             "importacao_id": imp_id,
         })
 
-    inserir_transacoes(registros)
+    inserir_transacoes(registros, user_id=uid)
     for k in ["_imp_file_key", "_imp_df_parsed", "_imp_rows"]:
         st.session_state.pop(k, None)
 
     msg = f"✅ {len(registros)} transações salvas!"
     if novas_criadas:
-        msg += f" ({novas_criadas} subcategoria(s) nova(s) criada(s) automaticamente)"
+        msg += f" ({novas_criadas} subcategoria(s) nova(s) criada(s))"
     st.success(msg)
     st.balloons()
