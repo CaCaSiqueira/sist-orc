@@ -24,7 +24,8 @@ def sidebar_user():
         st.divider()
         nome = st.user.name or st.user.email
         st.caption(f"👤 {nome}")
-        st.button("🚪 Sair", on_click=st.logout, use_container_width=True, key="_logout_btn")
+        if st.button("🚪 Sair", use_container_width=True):
+            st.logout()
 
 
 def _show_login_page():
@@ -35,9 +36,5 @@ def _show_login_page():
         st.markdown("Controle suas finanças de forma simples e segura.")
         st.markdown("---")
         st.markdown("### Faça login para continuar")
-        st.button(
-            "🔐 Entrar com Google",
-            on_click=st.login,
-            type="primary",
-            use_container_width=True,
-        )
+        if st.button("🔐 Entrar com Google", type="primary", use_container_width=True):
+            st.login("google")
