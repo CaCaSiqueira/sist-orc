@@ -45,9 +45,11 @@
   </text>
 
   <!-- Tagline -->
-  <text x="112" y="112"
+  <rect x="110" y="101" width="198" height="18" rx="5" fill="#6C5CE7" opacity="0.18"/>
+  <text x="209" y="114"
         font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
-        font-size="10.5" fill="#6C5CE7" opacity="0.7" letter-spacing="0.5">
-    Controle financeiro inteligente
+        font-size="10.5" font-weight="600" fill="#00CEC9" opacity="1"
+        letter-spacing="1.2" text-anchor="middle">
+    CONTROLE FINANCEIRO INTELIGENTE
   </text>
 </svg>
