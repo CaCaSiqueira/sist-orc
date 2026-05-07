@@ -199,6 +199,16 @@ def init_db():
                 UNIQUE(categoria_id, mes)
             )
         """))
+        conn.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS subcategorias (
+                id {pk},
+                nome TEXT NOT NULL,
+                cor TEXT DEFAULT '#888888',
+                natureza TEXT DEFAULT 'nao_classificado',
+                categoria_id INTEGER NOT NULL REFERENCES categorias(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL DEFAULT 'default'
+            )
+        """))
 
     # ── Migrações de colunas (cada ALTER em transação isolada) ────────────────
     migrations = [
@@ -212,6 +222,7 @@ def init_db():
         "ALTER TABLE importacoes ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'",
         "ALTER TABLE parcelamentos ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'",
         "ALTER TABLE investimentos ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'",
+        "ALTER TABLE transacoes ADD COLUMN subcategoria_id INTEGER",
     ]
     for ddl in migrations:
         try:
@@ -232,6 +243,44 @@ def init_db():
                     _conn.execute(text(ddl))
             except Exception:
                 pass
+
+    # ── Migração: move subcategorias de categorias → subcategorias ───────────
+    with engine.begin() as conn:
+        rows = conn.execute(text(
+            "SELECT id, nome, cor, natureza, parent_id, user_id "
+            "FROM categorias WHERE parent_id IS NOT NULL"
+        )).fetchall()
+        for row in rows:
+            old_id, nome, cor, nat, parent_id, uid = row
+            existing = conn.execute(text(
+                "SELECT id FROM subcategorias WHERE nome = :n AND categoria_id = :cid AND user_id = :uid"
+            ), {"n": nome, "cid": parent_id, "uid": uid}).fetchone()
+            if not existing:
+                if engine.dialect.name == "sqlite":
+                    conn.execute(text(
+                        "INSERT INTO subcategorias (nome, cor, natureza, categoria_id, user_id) "
+                        "VALUES (:n, :cor, :nat, :cid, :uid)"
+                    ), {"n": nome, "cor": cor or "#888888", "nat": nat or "nao_classificado",
+                        "cid": parent_id, "uid": uid})
+                    new_id = conn.execute(text("SELECT last_insert_rowid()")).scalar()
+                else:
+                    new_id = conn.execute(text(
+                        "INSERT INTO subcategorias (nome, cor, natureza, categoria_id, user_id) "
+                        "VALUES (:n, :cor, :nat, :cid, :uid) RETURNING id"
+                    ), {"n": nome, "cor": cor or "#888888", "nat": nat or "nao_classificado",
+                        "cid": parent_id, "uid": uid}).scalar()
+                conn.execute(text(
+                    "UPDATE transacoes SET categoria_id = :pid, subcategoria_id = :sid "
+                    "WHERE categoria_id = :oid"
+                ), {"pid": parent_id, "sid": new_id, "oid": old_id})
+            else:
+                new_id = existing[0]
+                conn.execute(text(
+                    "UPDATE transacoes SET categoria_id = :pid, subcategoria_id = :sid "
+                    "WHERE categoria_id = :oid"
+                ), {"pid": parent_id, "sid": new_id, "oid": old_id})
+        if rows:
+            conn.execute(text("DELETE FROM categorias WHERE parent_id IS NOT NULL"))
 
     # ── Categorias padrão para o usuário 'default' (banco local/legado) ───────
     with engine.begin() as conn:

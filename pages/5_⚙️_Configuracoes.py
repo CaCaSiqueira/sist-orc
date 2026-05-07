@@ -4,6 +4,7 @@ from auth import require_login, sidebar_user
 from db.queries import (
     listar_categorias, listar_categorias_arvore, criar_categoria,
     editar_categoria, excluir_categoria,
+    editar_subcategoria, excluir_subcategoria,
     listar_contas, criar_conta,
     listar_importacoes,
 )
@@ -100,6 +101,8 @@ def _bloco_categoria(row, filhos_map):
 
     # ── Editar / adicionar subcategoria ──────────────────────────────────────
     with st.expander(f"✏️ Editar / gerenciar  **{row['nome']}**", expanded=False):
+        # ── Editar categoria pai ─────────────────────────────────────────────
+        st.markdown("**Categoria pai**")
         with st.form(f"edit_{id_}"):
             c1, c2, c3 = st.columns([3, 2, 2])
             novo_nome = c1.text_input("Nome", value=row["nome"])
@@ -110,17 +113,48 @@ def _bloco_categoria(row, filhos_map):
                 format_func=lambda x: _NAT_LABELS[x],
             )
             col_s, col_d = st.columns(2)
-            salvar  = col_s.form_submit_button("💾 Salvar")
-            excluir = col_d.form_submit_button("🗑️ Excluir", type="secondary")
+            salvar  = col_s.form_submit_button("💾 Salvar categoria")
+            excluir = col_d.form_submit_button("🗑️ Excluir categoria", type="secondary")
 
         if salvar:
             editar_categoria(id_, novo_nome, row["tipo"], nova_cor, nova_nat, user_id=uid)
-            st.success("Salvo!")
+            st.success("Categoria salva!")
             st.rerun()
         if excluir:
             excluir_categoria(id_, user_id=uid)
             st.rerun()
 
+        # ── Editar subcategorias existentes ──────────────────────────────────
+        if filhos:
+            st.markdown("---")
+            st.markdown("**Subcategorias existentes**")
+            for filho in sorted(filhos, key=lambda r: r["nome"]):
+                sid  = int(filho["id"])
+                cor_f = filho["cor"] or "#888888"
+                with st.form(f"sub_edit_{sid}"):
+                    st.markdown(f"*{filho['nome']}*")
+                    e1, e2, e3 = st.columns([3, 2, 2])
+                    s_nome = e1.text_input("Nome", value=filho["nome"], key=f"se_nome_{sid}")
+                    s_cor  = e2.color_picker("Cor", value=cor_f, key=f"se_cor_{sid}")
+                    s_nat  = e3.selectbox(
+                        "Natureza", options=_NAT_OPTS,
+                        index=_NAT_OPTS.index(filho.get("natureza") or "nao_classificado"),
+                        format_func=lambda x: _NAT_LABELS[x],
+                        key=f"se_nat_{sid}",
+                    )
+                    es, ed = st.columns(2)
+                    salvar_s  = es.form_submit_button("💾 Salvar")
+                    excluir_s = ed.form_submit_button("🗑️ Excluir", type="secondary")
+
+                if salvar_s:
+                    editar_subcategoria(sid, s_nome, s_cor, s_nat, user_id=uid)
+                    st.success(f"'{s_nome}' salvo!")
+                    st.rerun()
+                if excluir_s:
+                    excluir_subcategoria(sid, user_id=uid)
+                    st.rerun()
+
+        # ── Nova subcategoria ────────────────────────────────────────────────
         st.markdown("---")
         st.markdown("**➕ Nova subcategoria**")
         with st.form(f"sub_{id_}"):

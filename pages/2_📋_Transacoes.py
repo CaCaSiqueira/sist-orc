@@ -62,9 +62,12 @@ if fa.get("data_fim"):
 if fa.get("tipo", "Todos") != "Todos":
     filtros["tipo"] = fa["tipo"]
 if fa.get("cat", "Todas") != "Todas":
-    cat_id = cat_label_to_id.get(fa["cat"])
-    if cat_id is not None:
-        filtros["categoria_id"] = cat_id
+    sel = cat_label_to_id.get(fa["cat"])
+    if sel:
+        if sel["type"] == "subcategoria":
+            filtros["subcategoria_id"] = sel["id"]
+        else:
+            filtros["categoria_id"] = sel["id"]
 if fa.get("busca"):
     filtros["busca"] = fa["busca"]
 
@@ -123,8 +126,14 @@ if st.button("💾 Salvar alterações"):
         if row["tipo"] != orig["tipo"]:
             atualizar_transacao(tid, "tipo", row["tipo"])
         if row.get("categoria") != orig.get("categoria"):
-            nova_cat_id = cat_label_to_id.get(row.get("categoria"))
-            atualizar_transacao(tid, "categoria_id", nova_cat_id)
+            nova_sel = cat_label_to_id.get(row.get("categoria"))
+            if nova_sel:
+                if nova_sel["type"] == "subcategoria":
+                    atualizar_transacao(tid, "categoria_id", nova_sel["cat_id"])
+                    atualizar_transacao(tid, "subcategoria_id", nova_sel["id"])
+                else:
+                    atualizar_transacao(tid, "categoria_id", nova_sel["id"])
+                    atualizar_transacao(tid, "subcategoria_id", None)
         if str(row.get("observacao", "")) != str(orig.get("observacao", "")):
             atualizar_transacao(tid, "observacao", row.get("observacao"))
     st.success("Alterações salvas!")

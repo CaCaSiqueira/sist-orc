@@ -92,59 +92,73 @@ def _month_sql(col: str) -> str:
 # ── Categorias ────────────────────────────────────────────────────────────────
 
 def listar_categorias(tipo=None, user_id=_UID):
-    sql = """
-        SELECT c.id, c.nome, c.tipo, c.cor, c.parent_id, c.natureza,
-               p.nome AS parent_nome
-        FROM categorias c
-        LEFT JOIN categorias p ON c.parent_id = p.id
-        WHERE c.user_id = :uid {extra}
-        ORDER BY COALESCE(p.nome, c.nome), c.parent_id NULLS FIRST, c.nome
-    """
-    extra = "AND c.tipo = :tipo" if tipo else ""
+    extra = "AND tipo = :tipo" if tipo else ""
     params = {"uid": user_id}
     if tipo:
         params["tipo"] = tipo
-    return _read(sql.format(extra=extra), params)
+    return _read(
+        f"SELECT id, nome, tipo, cor, natureza FROM categorias WHERE user_id = :uid {extra} ORDER BY nome",
+        params,
+    )
+
+
+def _listar_subcategorias_df(tipo=None, user_id=_UID):
+    sql = """
+        SELECT s.id, s.nome, s.cor, s.natureza, s.categoria_id, c.tipo
+        FROM subcategorias s
+        JOIN categorias c ON s.categoria_id = c.id
+        WHERE s.user_id = :uid
+    """
+    params = {"uid": user_id}
+    if tipo:
+        sql += " AND c.tipo = :tipo"
+        params["tipo"] = tipo
+    return _read(sql, params)
 
 
 def listar_categorias_arvore(tipo=None, user_id=_UID):
-    df = listar_categorias(tipo, user_id)
-    pais = df[df["parent_id"].isna()].to_dict("records")
+    pais = listar_categorias(tipo, user_id).to_dict("records")
+    subs_df = _listar_subcategorias_df(tipo, user_id)
     filhos_map = {}
-    for _, row in df[df["parent_id"].notna()].iterrows():
-        pid = int(row["parent_id"])
-        filhos_map.setdefault(pid, []).append(row.to_dict())
+    for _, row in subs_df.iterrows():
+        cid = int(row["categoria_id"])
+        filhos_map.setdefault(cid, []).append(row.to_dict())
     return pais, filhos_map
 
 
 def opcoes_categoria(tipo=None, user_id=_UID):
-    df = listar_categorias(tipo, user_id)
-    pais = df[df["parent_id"].isna()].copy()
-    filhos = df[df["parent_id"].notna()].copy()
+    pais_df = listar_categorias(tipo, user_id)
+    subs_df = _listar_subcategorias_df(tipo, user_id)
 
     labels, id_map = [], {}
-    for _, p in pais.iterrows():
+    for _, p in pais_df.iterrows():
         labels.append(p["nome"])
-        id_map[p["nome"]] = int(p["id"])
-        subs = filhos[filhos["parent_id"] == p["id"]].sort_values("nome")
+        id_map[p["nome"]] = {"type": "categoria", "id": int(p["id"])}
+        subs = subs_df[subs_df["categoria_id"] == p["id"]].sort_values("nome")
         for _, s in subs.iterrows():
             label = f"  ↳ {s['nome']}"
             labels.append(label)
-            id_map[label] = int(s["id"])
+            id_map[label] = {"type": "subcategoria", "id": int(s["id"]), "cat_id": int(p["id"])}
     return labels, id_map
 
 
 def criar_categoria(nome, tipo, cor="#888888", parent_id=None, natureza="nao_classificado", user_id=_UID):
     from sqlalchemy.exc import IntegrityError
     try:
-        _write(
-            "INSERT INTO categorias (nome, tipo, cor, parent_id, natureza, user_id) "
-            "VALUES (:nome, :tipo, :cor, :parent_id, :natureza, :uid)",
-            {"nome": nome, "tipo": tipo, "cor": cor, "parent_id": parent_id,
-             "natureza": natureza, "uid": user_id},
-        )
+        if parent_id is None:
+            _write(
+                "INSERT INTO categorias (nome, tipo, cor, natureza, user_id) "
+                "VALUES (:nome, :tipo, :cor, :natureza, :uid)",
+                {"nome": nome, "tipo": tipo, "cor": cor, "natureza": natureza, "uid": user_id},
+            )
+        else:
+            _write(
+                "INSERT INTO subcategorias (nome, cor, natureza, categoria_id, user_id) "
+                "VALUES (:nome, :cor, :natureza, :cid, :uid)",
+                {"nome": nome, "cor": cor, "natureza": natureza, "cid": parent_id, "uid": user_id},
+            )
     except IntegrityError:
-        raise ValueError(f"Já existe uma categoria com o nome '{nome}' neste nível.")
+        raise ValueError(f"Já existe uma subcategoria com o nome '{nome}' nesta categoria.")
 
 
 def editar_categoria(id_, nome, tipo, cor, natureza="nao_classificado", user_id=_UID):
@@ -152,6 +166,14 @@ def editar_categoria(id_, nome, tipo, cor, natureza="nao_classificado", user_id=
         "UPDATE categorias SET nome = :nome, tipo = :tipo, cor = :cor, natureza = :natureza "
         "WHERE id = :id AND user_id = :uid",
         {"nome": nome, "tipo": tipo, "cor": cor, "natureza": natureza, "id": id_, "uid": user_id},
+    )
+
+
+def editar_subcategoria(id_, nome, cor, natureza="nao_classificado", user_id=_UID):
+    _write(
+        "UPDATE subcategorias SET nome = :nome, cor = :cor, natureza = :natureza "
+        "WHERE id = :id AND user_id = :uid",
+        {"nome": nome, "cor": cor, "natureza": natureza, "id": id_, "uid": user_id},
     )
 
 
@@ -163,11 +185,20 @@ def atualizar_natureza_categoria(id_: int, natureza: str, user_id=_UID):
 
 
 def excluir_categoria(id_, user_id=_UID):
-    _write("UPDATE categorias SET parent_id = NULL WHERE parent_id = :id AND user_id = :uid",
+    _write("UPDATE transacoes SET categoria_id = NULL, subcategoria_id = NULL "
+           "WHERE categoria_id = :id AND user_id = :uid",
            {"id": id_, "uid": user_id})
-    _write("UPDATE transacoes SET categoria_id = NULL WHERE categoria_id = :id AND user_id = :uid",
+    _write("DELETE FROM subcategorias WHERE categoria_id = :id AND user_id = :uid",
            {"id": id_, "uid": user_id})
     _write("DELETE FROM categorias WHERE id = :id AND user_id = :uid",
+           {"id": id_, "uid": user_id})
+
+
+def excluir_subcategoria(id_, user_id=_UID):
+    _write("UPDATE transacoes SET subcategoria_id = NULL "
+           "WHERE subcategoria_id = :id AND user_id = :uid",
+           {"id": id_, "uid": user_id})
+    _write("DELETE FROM subcategorias WHERE id = :id AND user_id = :uid",
            {"id": id_, "uid": user_id})
 
 
@@ -246,7 +277,10 @@ def listar_transacoes(filtros: dict = None, user_id=_UID):
     if filtros.get("tipo"):
         where.append("t.tipo = :tipo")
         params["tipo"] = filtros["tipo"]
-    if filtros.get("categoria_id") is not None:
+    if filtros.get("subcategoria_id") is not None:
+        where.append("t.subcategoria_id = :subcategoria_id")
+        params["subcategoria_id"] = filtros["subcategoria_id"]
+    elif filtros.get("categoria_id") is not None:
         where.append("t.categoria_id = :categoria_id")
         params["categoria_id"] = filtros["categoria_id"]
     if filtros.get("conta_id"):
@@ -263,11 +297,13 @@ def listar_transacoes(filtros: dict = None, user_id=_UID):
 
     sql = f"""
         SELECT t.id, t.data, t.descricao, t.valor, t.tipo,
-               c.nome AS categoria, c.cor,
+               COALESCE(s.nome, c.nome) AS categoria,
+               COALESCE(s.cor, c.cor) AS cor,
                ct.nome AS conta, ct.banco,
                t.observacao
         FROM transacoes t
         LEFT JOIN categorias c ON t.categoria_id = c.id
+        LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
         LEFT JOIN contas ct ON t.conta_id = ct.id
         {where_sql}
         ORDER BY t.data DESC, t.id DESC
@@ -294,12 +330,14 @@ def resumo_por_categoria(data_inicio=None, data_fim=None, user_id=_UID):
     where_sql = "WHERE " + " AND ".join(where)
 
     sql = f"""
-        SELECT c.nome AS categoria, c.cor, t.tipo,
+        SELECT COALESCE(s.nome, c.nome) AS categoria,
+               COALESCE(s.cor, c.cor) AS cor, t.tipo,
                SUM(t.valor) AS total, COUNT(*) AS qtd
         FROM transacoes t
         LEFT JOIN categorias c ON t.categoria_id = c.id
+        LEFT JOIN subcategorias s ON t.subcategoria_id = s.id
         {where_sql}
-        GROUP BY c.nome, c.cor, t.tipo
+        GROUP BY COALESCE(s.nome, c.nome), COALESCE(s.cor, c.cor), t.tipo
         ORDER BY total DESC
     """
     return _read(sql, params)
