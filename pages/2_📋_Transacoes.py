@@ -88,6 +88,7 @@ st.markdown("---")
 st.subheader(f"{len(df)} transações")
 
 display = df.copy()
+display["data"] = pd.to_datetime(display["data"], errors="coerce").dt.date
 display["valor_fmt"] = display.apply(
     lambda r: f"+{fmt(r['valor'])}" if r["tipo"] == "receita" else f"-{fmt(r['valor'])}", axis=1
 )
