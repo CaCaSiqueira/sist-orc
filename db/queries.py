@@ -135,12 +135,16 @@ def opcoes_categoria(tipo=None, user_id=_UID):
 
 
 def criar_categoria(nome, tipo, cor="#888888", parent_id=None, natureza="nao_classificado", user_id=_UID):
-    _write(
-        "INSERT INTO categorias (nome, tipo, cor, parent_id, natureza, user_id) "
-        "VALUES (:nome, :tipo, :cor, :parent_id, :natureza, :uid)",
-        {"nome": nome, "tipo": tipo, "cor": cor, "parent_id": parent_id,
-         "natureza": natureza, "uid": user_id},
-    )
+    from sqlalchemy.exc import IntegrityError
+    try:
+        _write(
+            "INSERT INTO categorias (nome, tipo, cor, parent_id, natureza, user_id) "
+            "VALUES (:nome, :tipo, :cor, :parent_id, :natureza, :uid)",
+            {"nome": nome, "tipo": tipo, "cor": cor, "parent_id": parent_id,
+             "natureza": natureza, "uid": user_id},
+        )
+    except IntegrityError:
+        raise ValueError(f"Já existe uma categoria com o nome '{nome}' neste nível.")
 
 
 def editar_categoria(id_, nome, tipo, cor, natureza="nao_classificado", user_id=_UID):

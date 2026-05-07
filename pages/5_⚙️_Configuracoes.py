@@ -61,10 +61,13 @@ def _bloco_categoria(row, cats_df, filhos_map, nivel=0):
             sub_cor  = st.color_picker("Cor", "#888888", key=f"sub_cor_{id_}")
             if st.form_submit_button("Criar subcategoria"):
                 if sub_nome.strip():
-                    criar_categoria(sub_nome.strip(), row["tipo"], sub_cor,
-                                    parent_id=id_, user_id=uid)
-                    st.success(f"Subcategoria '{sub_nome}' criada!")
-                    st.rerun()
+                    try:
+                        criar_categoria(sub_nome.strip(), row["tipo"], sub_cor,
+                                        parent_id=id_, user_id=uid)
+                        st.success(f"Subcategoria '{sub_nome}' criada!")
+                        st.rerun()
+                    except ValueError as e:
+                        st.error(str(e))
                 else:
                     st.error("Informe o nome.")
 
