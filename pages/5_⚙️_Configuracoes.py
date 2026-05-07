@@ -108,39 +108,6 @@ def _bloco_categoria(row, filhos_map):
             excluir_categoria(id_, user_id=uid)
             st.rerun()
 
-        # ── Editar subcategorias existentes ──────────────────────────────────
-        if filhos:
-            st.markdown("---")
-            with st.expander(f"🔧 Editar subcategorias existentes ({len(filhos)})", expanded=False):
-                for filho in sorted(filhos, key=lambda r: r["nome"]):
-                    sid   = int(filho["id"])
-                    cor_f = filho["cor"] or "#888888"
-                    with st.form(f"sub_edit_{sid}"):
-                        st.markdown(f"*{filho['nome']}*")
-                        e1, e2, e3 = st.columns([3, 2, 2])
-                        s_nome = e1.text_input("Nome", value=filho["nome"], key=f"se_nome_{sid}")
-                        s_cor  = e2.color_picker("Cor", value=cor_f, key=f"se_cor_{sid}")
-                        s_nat  = e3.selectbox(
-                            "Natureza", options=_NAT_OPTS,
-                            index=_NAT_OPTS.index(filho.get("natureza") or "nao_classificado"),
-                            format_func=lambda x: _NAT_LABELS[x],
-                            key=f"se_nat_{sid}",
-                        )
-                        es, ed = st.columns(2)
-                        salvar_s  = es.form_submit_button("💾 Salvar")
-                        excluir_s = ed.form_submit_button("🗑️ Excluir", type="secondary")
-
-                    if salvar_s:
-                        try:
-                            editar_subcategoria(sid, s_nome, s_cor, s_nat, user_id=uid)
-                            st.success(f"'{s_nome}' salvo!")
-                            st.rerun()
-                        except ValueError as e:
-                            st.error(str(e))
-                    if excluir_s:
-                        excluir_subcategoria(sid, user_id=uid)
-                        st.rerun()
-
         # ── Nova subcategoria ────────────────────────────────────────────────
         st.markdown("---")
         st.markdown("**➕ Nova subcategoria**")
