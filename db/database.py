@@ -206,7 +206,8 @@ def init_db():
                 cor TEXT DEFAULT '#888888',
                 natureza TEXT DEFAULT 'nao_classificado',
                 categoria_id INTEGER NOT NULL REFERENCES categorias(id) ON DELETE CASCADE,
-                user_id TEXT NOT NULL DEFAULT 'default'
+                user_id TEXT NOT NULL DEFAULT 'default',
+                UNIQUE(nome, categoria_id, user_id)
             )
         """))
 
@@ -231,12 +232,58 @@ def init_db():
         except Exception:
             pass  # coluna já existe
 
-    # ── PostgreSQL: constraint UNIQUE(nome, user_id, parent_id) ─────────────
+    # ── Remove duplicatas de categorias (mesmo nome + user_id) ──────────────
+    with engine.begin() as conn:
+        dups = conn.execute(text("""
+            SELECT nome, user_id, MIN(id) AS keep_id
+            FROM categorias
+            GROUP BY nome, user_id
+            HAVING COUNT(*) > 1
+        """)).fetchall()
+        for dup in dups:
+            nome_d, uid_d, keep_id = dup
+            ids_to_del = conn.execute(text(
+                "SELECT id FROM categorias WHERE nome = :n AND user_id = :uid AND id != :kid"
+            ), {"n": nome_d, "uid": uid_d, "kid": keep_id}).fetchall()
+            for (del_id,) in ids_to_del:
+                conn.execute(text(
+                    "UPDATE transacoes SET categoria_id = :kid WHERE categoria_id = :did"
+                ), {"kid": keep_id, "did": del_id})
+                conn.execute(text(
+                    "UPDATE subcategorias SET categoria_id = :kid WHERE categoria_id = :did"
+                ), {"kid": keep_id, "did": del_id})
+                conn.execute(text("DELETE FROM categorias WHERE id = :did"), {"did": del_id})
+
+    # ── Remove duplicatas de subcategorias (mesmo nome + categoria_id + user_id)
+    with engine.begin() as conn:
+        dups = conn.execute(text("""
+            SELECT nome, categoria_id, user_id, MIN(id) AS keep_id
+            FROM subcategorias
+            GROUP BY nome, categoria_id, user_id
+            HAVING COUNT(*) > 1
+        """)).fetchall()
+        for dup in dups:
+            nome_d, cid_d, uid_d, keep_id = dup
+            ids_to_del = conn.execute(text(
+                "SELECT id FROM subcategorias WHERE nome = :n AND categoria_id = :cid "
+                "AND user_id = :uid AND id != :kid"
+            ), {"n": nome_d, "cid": cid_d, "uid": uid_d, "kid": keep_id}).fetchall()
+            for (del_id,) in ids_to_del:
+                conn.execute(text(
+                    "UPDATE transacoes SET subcategoria_id = :kid WHERE subcategoria_id = :did"
+                ), {"kid": keep_id, "did": del_id})
+                conn.execute(text("DELETE FROM subcategorias WHERE id = :did"), {"did": del_id})
+
+    # ── PostgreSQL: constraints UNIQUE ────────────────────────────────────────
     if dialect() == "postgresql":
         for ddl in [
             "ALTER TABLE categorias DROP CONSTRAINT IF EXISTS categorias_nome_key",
             "ALTER TABLE categorias DROP CONSTRAINT IF EXISTS categorias_nome_user_uq",
-            "ALTER TABLE categorias ADD CONSTRAINT categorias_nome_parent_user_uq UNIQUE(nome, user_id, parent_id)",
+            "ALTER TABLE categorias DROP CONSTRAINT IF EXISTS categorias_nome_parent_user_uq",
+            "ALTER TABLE categorias ADD CONSTRAINT categorias_nome_user_uq UNIQUE(nome, user_id)",
+            "ALTER TABLE subcategorias DROP CONSTRAINT IF EXISTS subcategorias_nome_cat_user_uq",
+            "ALTER TABLE subcategorias DROP CONSTRAINT IF EXISTS subcategorias_nome_categoria_id_user_id_key",
+            "ALTER TABLE subcategorias ADD CONSTRAINT subcategorias_nome_cat_user_uq UNIQUE(nome, categoria_id, user_id)",
         ]:
             try:
                 with engine.begin() as _conn:

@@ -158,7 +158,10 @@ def criar_categoria(nome, tipo, cor="#888888", parent_id=None, natureza="nao_cla
                 {"nome": nome, "cor": cor, "natureza": natureza, "cid": parent_id, "uid": user_id},
             )
     except IntegrityError:
-        raise ValueError(f"Já existe uma subcategoria com o nome '{nome}' nesta categoria.")
+        if parent_id is None:
+            raise ValueError(f"Já existe uma categoria com o nome '{nome}'.")
+        else:
+            raise ValueError(f"Já existe uma subcategoria com o nome '{nome}' nesta categoria.")
 
 
 def editar_categoria(id_, nome, tipo, cor, natureza="nao_classificado", user_id=_UID):
@@ -170,11 +173,15 @@ def editar_categoria(id_, nome, tipo, cor, natureza="nao_classificado", user_id=
 
 
 def editar_subcategoria(id_, nome, cor, natureza="nao_classificado", user_id=_UID):
-    _write(
-        "UPDATE subcategorias SET nome = :nome, cor = :cor, natureza = :natureza "
-        "WHERE id = :id AND user_id = :uid",
-        {"nome": nome, "cor": cor, "natureza": natureza, "id": id_, "uid": user_id},
-    )
+    from sqlalchemy.exc import IntegrityError
+    try:
+        _write(
+            "UPDATE subcategorias SET nome = :nome, cor = :cor, natureza = :natureza "
+            "WHERE id = :id AND user_id = :uid",
+            {"nome": nome, "cor": cor, "natureza": natureza, "id": id_, "uid": user_id},
+        )
+    except IntegrityError:
+        raise ValueError(f"Já existe uma subcategoria com o nome '{nome}' nesta categoria.")
 
 
 def atualizar_natureza_categoria(id_: int, natureza: str, user_id=_UID):

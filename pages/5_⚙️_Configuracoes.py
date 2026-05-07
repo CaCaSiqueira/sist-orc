@@ -147,9 +147,12 @@ def _bloco_categoria(row, filhos_map):
                     excluir_s = ed.form_submit_button("🗑️ Excluir", type="secondary")
 
                 if salvar_s:
-                    editar_subcategoria(sid, s_nome, s_cor, s_nat, user_id=uid)
-                    st.success(f"'{s_nome}' salvo!")
-                    st.rerun()
+                    try:
+                        editar_subcategoria(sid, s_nome, s_cor, s_nat, user_id=uid)
+                        st.success(f"'{s_nome}' salvo!")
+                        st.rerun()
+                    except ValueError as e:
+                        st.error(str(e))
                 if excluir_s:
                     excluir_subcategoria(sid, user_id=uid)
                     st.rerun()
