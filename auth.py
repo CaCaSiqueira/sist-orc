@@ -3,6 +3,11 @@ import streamlit as st
 
 def require_login() -> str:
     """Exige login. Retorna user_id (inteiro como string) ou para a execução."""
+    if not st.session_state.get("_db_ready"):
+        from db.database import init_db
+        init_db()
+        st.session_state["_db_ready"] = True
+
     if not st.session_state.get("_user_id"):
         _show_login_page()
         st.stop()
