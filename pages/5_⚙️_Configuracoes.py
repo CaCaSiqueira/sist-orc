@@ -37,67 +37,51 @@ def _bloco_categoria(row, filhos_map):
     icone  = "🔴" if row["tipo"] == "despesa" else "🟢"
     nat    = _NAT_LABELS.get(row.get("natureza", "nao_classificado"), "")
 
-    # ── Monta HTML dos filhos ────────────────────────────────────────────────
-    filhos_html = ""
+    n_subs    = len(filhos)
+    subs_label = f"{n_subs} subcategoria{'s' if n_subs != 1 else ''}"
+
+    # ── Cabeçalho do card (categoria pai) ────────────────────────────────────
+    st.markdown(
+        f"""<div style="border:1px solid {cor}55;border-left:4px solid {cor};
+            border-radius:10px 10px {'0 0' if filhos else '10px 10px'};
+            background:linear-gradient(90deg,{cor}22 0%,#1a1a2e 70%);
+            display:flex;align-items:center;gap:10px;padding:10px 14px;
+            margin-bottom:0">
+            <span style="font-size:17px">{icone}</span>
+            <span style="font-size:15px;font-weight:700;color:#fff;flex:1">{row['nome']}</span>
+            {_cor_badge(cor, nat, pequeno=True)}
+            <span style="font-size:11px;color:#888;white-space:nowrap">{subs_label}</span>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+    # ── Subcategorias (dentro do mesmo card visualmente) ─────────────────────
     for i, filho in enumerate(sorted(filhos, key=lambda r: r["nome"])):
         is_last  = i == len(filhos) - 1
         conector = "└─" if is_last else "├─"
         cor_f    = filho["cor"] or "#888888"
         nat_f    = _NAT_LABELS.get(filho.get("natureza", "nao_classificado"), "")
-        filhos_html += f"""
-        <div style="
-            display:flex; align-items:center; gap:8px;
-            padding:6px 14px 6px 18px;
-            border-bottom: 1px solid #ffffff0d;
-        ">
-            <span style="color:{cor}99;font-family:monospace;font-size:13px;flex-shrink:0">{conector}</span>
-            <span style="
-                width:9px;height:9px;border-radius:50%;
-                background:{cor_f};display:inline-block;flex-shrink:0;
-                box-shadow:0 0 4px {cor_f}88
-            "></span>
-            <span style="font-size:13px;color:#e0e0e0;flex:1">{filho['nome']}</span>
-            <span style="
-                font-size:10px;color:#aaa;
-                background:#ffffff12;border-radius:8px;padding:1px 7px
-            ">{nat_f}</span>
-        </div>"""
+        radius   = "0 0 10px 10px" if is_last else "0"
+        st.markdown(
+            f"""<div style="border-left:4px solid {cor};border-right:1px solid {cor}55;
+                border-bottom:1px solid {cor}{'33' if is_last else '22'};
+                border-radius:{radius};background:#13131f;
+                display:flex;align-items:center;gap:8px;padding:6px 14px 6px 18px;
+                margin-bottom:0">
+                <span style="color:{cor}99;font-family:monospace;font-size:13px;flex-shrink:0">{conector}</span>
+                <span style="width:9px;height:9px;border-radius:50%;background:{cor_f};
+                    display:inline-block;flex-shrink:0;box-shadow:0 0 4px {cor_f}88"></span>
+                <span style="font-size:13px;color:#e0e0e0;flex:1">{filho['nome']}</span>
+                <span style="font-size:10px;color:#aaa;background:#ffffff12;
+                    border-radius:8px;padding:1px 7px">{nat_f}</span>
+            </div>""",
+            unsafe_allow_html=True,
+        )
 
-    filhos_section = ""
-    if filhos_html:
-        filhos_section = f"""
-        <div style="
-            background:#13131f;
-            border-top:1px solid {cor}33;
-        ">{filhos_html}</div>"""
-
-    n_subs = len(filhos)
-    subs_label = f"{n_subs} subcategoria{'s' if n_subs != 1 else ''}"
-
-    # ── Card completo (pai + filhos dentro do mesmo container) ───────────────
-    st.markdown(f"""
-    <div style="
-        border: 1px solid {cor}55;
-        border-left: 4px solid {cor};
-        border-radius: 10px;
-        overflow: hidden;
-        margin-bottom: 10px;
-        background: #1a1a2e;
-    ">
-        <!-- Cabeçalho da categoria pai -->
-        <div style="
-            display:flex; align-items:center; gap:10px;
-            padding:10px 14px;
-            background: linear-gradient(90deg, {cor}22 0%, transparent 80%);
-        ">
-            <span style="font-size:17px">{icone}</span>
-            <span style="font-size:15px;font-weight:700;color:#fff;flex:1">{row['nome']}</span>
-            {_cor_badge(cor, nat, pequeno=True)}
-            <span style="font-size:11px;color:#888;white-space:nowrap">{subs_label}</span>
-        </div>
-        {filhos_section}
-    </div>
-    """, unsafe_allow_html=True)
+    if not filhos:
+        st.markdown("<div style='margin-bottom:10px'></div>", unsafe_allow_html=True)
+    else:
+        st.markdown("<div style='margin-bottom:10px'></div>", unsafe_allow_html=True)
 
     # ── Editar / adicionar subcategoria ──────────────────────────────────────
     with st.expander(f"✏️ Editar / gerenciar  **{row['nome']}**", expanded=False):
