@@ -1,13 +1,19 @@
 import streamlit as st
+from pathlib import Path
 from db.database import init_db
 from auth import require_login, sidebar_user
 
 st.set_page_config(
-    page_title="Orçamento Pessoal",
-    page_icon="💰",
+    page_title="Finanças Pro",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# Logo no topo da página
+_logo = Path(__file__).parent / "assets" / "logo.svg"
+if _logo.exists():
+    st.image(str(_logo), width=380)
 
 init_db()
 uid = require_login()

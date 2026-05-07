@@ -18,9 +18,13 @@ def require_login() -> str:
 
 
 def sidebar_user():
-    """Exibe nome do usuário e botão de logout na sidebar."""
+    """Exibe logo, nome do usuário e botão de logout na sidebar."""
     nome = st.session_state.get("_user_nome", "")
     with st.sidebar:
+        from pathlib import Path
+        _logo = Path(__file__).parent / "assets" / "logo.svg"
+        if _logo.exists():
+            st.image(str(_logo), use_container_width=True)
         st.divider()
         st.caption(f"👤 {nome}")
         if st.button("🚪 Sair", use_container_width=True):
