@@ -1,8 +1,57 @@
+import hashlib
+import os
+import base64
+
 import pandas as pd
 from sqlalchemy import text
 from .database import get_engine, dialect
 
 _UID = "default"  # fallback quando não há login
+
+
+# ── Usuários ──────────────────────────────────────────────────────────────────
+
+def _hash_senha(senha: str) -> str:
+    salt = os.urandom(16)
+    key = hashlib.pbkdf2_hmac("sha256", senha.encode(), salt, 100_000)
+    return base64.b64encode(salt + key).decode()
+
+
+def _verificar_senha(senha: str, armazenado: str) -> bool:
+    try:
+        raw = base64.b64decode(armazenado)
+        salt, key = raw[:16], raw[16:]
+        return key == hashlib.pbkdf2_hmac("sha256", senha.encode(), salt, 100_000)
+    except Exception:
+        return False
+
+
+def get_usuario(email: str) -> dict | None:
+    row = _read(
+        "SELECT id, nome, senha_hash FROM usuarios WHERE email = :e",
+        {"e": email},
+    )
+    if row.empty:
+        return None
+    r = row.iloc[0]
+    return {"id": str(int(r["id"])), "nome": str(r["nome"]), "senha_hash": str(r["senha_hash"])}
+
+
+def criar_usuario(email: str, nome: str, senha: str) -> str:
+    """Cria usuário com senha criptografada. Retorna user_id como string."""
+    uid = _insert_returning_id(
+        "INSERT INTO usuarios (email, nome, senha_hash) VALUES (:e, :n, :h) RETURNING id",
+        {"e": email, "n": nome, "h": _hash_senha(senha)},
+    )
+    return str(uid)
+
+
+def autenticar(email: str, senha: str) -> tuple[str, str] | None:
+    """Retorna (user_id, nome) se credenciais válidas, senão None."""
+    u = get_usuario(email)
+    if u and _verificar_senha(senha, u["senha_hash"]):
+        return u["id"], u["nome"]
+    return None
 
 
 def _read(sql: str, params: dict = None) -> pd.DataFrame:
@@ -186,12 +235,18 @@ def listar_transacoes(filtros: dict = None, user_id=_UID):
     if filtros.get("tipo"):
         where.append("t.tipo = :tipo")
         params["tipo"] = filtros["tipo"]
-    if filtros.get("categoria_id"):
+    if filtros.get("categoria_id") is not None:
         where.append("t.categoria_id = :categoria_id")
         params["categoria_id"] = filtros["categoria_id"]
     if filtros.get("conta_id"):
         where.append("t.conta_id = :conta_id")
         params["conta_id"] = filtros["conta_id"]
+    if filtros.get("busca"):
+        if dialect() == "postgresql":
+            where.append("t.descricao ILIKE :busca")
+        else:
+            where.append("LOWER(t.descricao) LIKE LOWER(:busca)")
+        params["busca"] = f"%{filtros['busca']}%"
 
     where_sql = "WHERE " + " AND ".join(where)
 

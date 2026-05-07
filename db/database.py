@@ -95,6 +95,15 @@ def init_db():
     # ── Cria tabelas ──────────────────────────────────────────────────────────
     with engine.begin() as conn:
         conn.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS usuarios (
+                id {pk},
+                email TEXT NOT NULL UNIQUE,
+                nome TEXT NOT NULL DEFAULT '',
+                senha_hash TEXT NOT NULL DEFAULT '',
+                criado_em {ts} DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text(f"""
             CREATE TABLE IF NOT EXISTS categorias (
                 id {pk},
                 nome TEXT NOT NULL,
@@ -193,6 +202,8 @@ def init_db():
 
     # ── Migrações de colunas (cada ALTER em transação isolada) ────────────────
     migrations = [
+        "ALTER TABLE usuarios ADD COLUMN nome TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE usuarios ADD COLUMN senha_hash TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE categorias ADD COLUMN parent_id INTEGER REFERENCES categorias(id)",
         "ALTER TABLE categorias ADD COLUMN natureza TEXT DEFAULT 'nao_classificado'",
         "ALTER TABLE categorias ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'",

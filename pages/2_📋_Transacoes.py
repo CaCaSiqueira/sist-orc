@@ -17,27 +17,56 @@ contas_df = listar_contas(user_id=uid)
 todas_labels, cat_label_to_id = opcoes_categoria(user_id=uid)
 
 # ── Filtros ──────────────────────────────────────────────────────────────────
+def _limpar_filtros():
+    for k in ("f_data_ini", "f_data_fim"):
+        st.session_state.pop(k, None)
+    st.session_state.update(f_tipo="Todos", f_cat="Todas", f_busca="")
+    st.session_state.pop("filtros_aplicados", None)
+
 with st.expander("🔍 Filtros", expanded=True):
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        data_ini = st.date_input("De", value=None)
+        data_ini = st.date_input("De", value=None, key="f_data_ini")
     with col2:
-        data_fim = st.date_input("Até", value=None)
+        data_fim = st.date_input("Até", value=None, key="f_data_fim")
     with col3:
-        tipo_f = st.selectbox("Tipo", ["Todos", "despesa", "receita"])
+        tipo_f = st.selectbox("Tipo", ["Todos", "despesa", "receita"], key="f_tipo")
     with col4:
         cat_opts = ["Todas"] + todas_labels
-        cat_f = st.selectbox("Categoria", cat_opts, help="↳ = subcategoria")
+        cat_f = st.selectbox("Categoria", cat_opts, help="↳ = subcategoria", key="f_cat")
+    c_busca, c_aplicar, c_limpar = st.columns([4, 1, 1])
+    with c_busca:
+        busca = st.text_input("Buscar descrição", placeholder="Ex: mercado, salário...", key="f_busca")
+    with c_aplicar:
+        st.write("")
+        aplicar = st.button("🔍 Filtrar", type="primary", use_container_width=True)
+    with c_limpar:
+        st.write("")
+        st.button("✖ Limpar", on_click=_limpar_filtros, use_container_width=True)
 
+if aplicar:
+    st.session_state["filtros_aplicados"] = {
+        "data_ini": data_ini,
+        "data_fim": data_fim,
+        "tipo": tipo_f,
+        "cat": cat_f,
+        "busca": busca.strip() if busca else "",
+    }
+
+fa = st.session_state.get("filtros_aplicados", {})
 filtros = {}
-if data_ini:
-    filtros["data_inicio"] = str(data_ini)
-if data_fim:
-    filtros["data_fim"] = str(data_fim)
-if tipo_f != "Todos":
-    filtros["tipo"] = tipo_f
-if cat_f != "Todas":
-    filtros["categoria_id"] = cat_label_to_id.get(cat_f)
+if fa.get("data_ini"):
+    filtros["data_inicio"] = str(fa["data_ini"])
+if fa.get("data_fim"):
+    filtros["data_fim"] = str(fa["data_fim"])
+if fa.get("tipo", "Todos") != "Todos":
+    filtros["tipo"] = fa["tipo"]
+if fa.get("cat", "Todas") != "Todas":
+    cat_id = cat_label_to_id.get(fa["cat"])
+    if cat_id is not None:
+        filtros["categoria_id"] = cat_id
+if fa.get("busca"):
+    filtros["busca"] = fa["busca"]
 
 df = listar_transacoes(filtros, user_id=uid)
 
