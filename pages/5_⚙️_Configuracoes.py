@@ -16,33 +16,93 @@ st.title("⚙️ Configurações")
 
 tab_cats, tab_contas, tab_imports = st.tabs(["🏷️ Categorias", "🏦 Contas", "📁 Importações"])
 
+_NAT_OPTS   = ["nao_classificado", "fixo", "variavel"]
+_NAT_LABELS = {"nao_classificado": "Não classificado", "fixo": "Fixo", "variavel": "Variável"}
 
-def _icone(tipo): return "🔴" if tipo == "despesa" else "🟢"
+
+def _cor_badge(cor, nome, pequeno=False):
+    size = "10px" if pequeno else "13px"
+    pad  = "2px 8px" if pequeno else "3px 10px"
+    return (
+        f"<span style='background:{cor};color:#fff;border-radius:12px;"
+        f"padding:{pad};font-size:{size};font-weight:600'>{nome}</span>"
+    )
 
 
-def _bloco_categoria(row, cats_df, filhos_map, nivel=0):
-    id_ = int(row["id"])
-    filhos = filhos_map.get(id_, [])
-    prefixo = "↳ " if nivel > 0 else ""
+def _bloco_categoria(row, filhos_map):
+    id_     = int(row["id"])
+    cor     = row["cor"] or "#888888"
+    filhos  = filhos_map.get(id_, [])
+    icone   = "🔴" if row["tipo"] == "despesa" else "🟢"
 
-    with st.expander(
-        f"{_icone(row['tipo'])} {prefixo}{row['nome']}"
-        + (f"  _(pai: {row['parent_nome']})_" if row.get("parent_nome") else ""),
-        expanded=False,
-    ):
-        NATUREZA_OPTS   = ["nao_classificado", "fixo", "variavel"]
-        NATUREZA_LABELS = {"nao_classificado": "Não classificado", "fixo": "Fixo", "variavel": "Variável"}
-        nat_atual = row.get("natureza") or "nao_classificado"
+    # ── Card do pai ──────────────────────────────────────────────────────────
+    st.markdown(
+        f"""
+        <div style="
+            border-left: 4px solid {cor};
+            background: #1e1e2e;
+            border-radius: 0 8px 8px 0;
+            padding: 8px 14px;
+            margin-bottom: 2px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        ">
+            <span style="font-size:16px">{icone}</span>
+            <span style="font-size:15px;font-weight:700;color:#fff">{row['nome']}</span>
+            {_cor_badge(cor, _NAT_LABELS.get(row.get('natureza','nao_classificado'),''), pequeno=True)}
+            <span style="font-size:11px;color:#888;margin-left:auto">
+                {len(filhos)} subcategoria{'s' if len(filhos)!=1 else ''}
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ── Subcategorias ────────────────────────────────────────────────────────
+    if filhos:
+        for i, filho in enumerate(sorted(filhos, key=lambda r: r["nome"])):
+            is_last = i == len(filhos) - 1
+            conector = "└─" if is_last else "├─"
+            cor_f = filho["cor"] or "#888888"
+            st.markdown(
+                f"""
+                <div style="
+                    margin-left: 24px;
+                    border-left: 2px solid {cor}44;
+                    padding: 5px 12px;
+                    margin-bottom: 2px;
+                    background: #16162a;
+                    border-radius: 0 6px 6px 0;
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                ">
+                    <span style="color:{cor};font-family:monospace;font-size:13px">{conector}</span>
+                    <span style="
+                        width:10px;height:10px;border-radius:50%;
+                        background:{cor_f};display:inline-block;flex-shrink:0
+                    "></span>
+                    <span style="font-size:13px;color:#ddd">{filho['nome']}</span>
+                    <span style="font-size:11px;color:#666;margin-left:auto">
+                        {_NAT_LABELS.get(filho.get('natureza','nao_classificado'),'')}
+                    </span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    # ── Editar / adicionar subcategoria ──────────────────────────────────────
+    with st.expander(f"✏️ Editar / gerenciar  **{row['nome']}**", expanded=False):
         with st.form(f"edit_{id_}"):
             c1, c2, c3 = st.columns([3, 2, 2])
             novo_nome = c1.text_input("Nome", value=row["nome"])
-            nova_cor  = c2.color_picker("Cor", value=row["cor"] or "#888888")
+            nova_cor  = c2.color_picker("Cor", value=cor)
             nova_nat  = c3.selectbox(
-                "Natureza", options=NATUREZA_OPTS,
-                index=NATUREZA_OPTS.index(nat_atual) if nat_atual in NATUREZA_OPTS else 0,
-                format_func=lambda x: NATUREZA_LABELS[x],
+                "Natureza", options=_NAT_OPTS,
+                index=_NAT_OPTS.index(row.get("natureza") or "nao_classificado"),
+                format_func=lambda x: _NAT_LABELS[x],
             )
-            st.caption("Tipo não pode ser alterado aqui para não quebrar subcategorias.")
             col_s, col_d = st.columns(2)
             salvar  = col_s.form_submit_button("💾 Salvar")
             excluir = col_d.form_submit_button("🗑️ Excluir", type="secondary")
@@ -55,11 +115,12 @@ def _bloco_categoria(row, cats_df, filhos_map, nivel=0):
             excluir_categoria(id_, user_id=uid)
             st.rerun()
 
+        st.markdown("---")
+        st.markdown("**➕ Nova subcategoria**")
         with st.form(f"sub_{id_}"):
-            st.markdown("**➕ Nova subcategoria**")
             sub_nome = st.text_input("Nome da subcategoria", key=f"sub_nome_{id_}")
             sub_cor  = st.color_picker("Cor", "#888888", key=f"sub_cor_{id_}")
-            if st.form_submit_button("Criar subcategoria"):
+            if st.form_submit_button("Criar subcategoria", type="primary"):
                 if sub_nome.strip():
                     try:
                         criar_categoria(sub_nome.strip(), row["tipo"], sub_cor,
@@ -71,12 +132,7 @@ def _bloco_categoria(row, cats_df, filhos_map, nivel=0):
                 else:
                     st.error("Informe o nome.")
 
-    if filhos:
-        with st.container():
-            st.markdown(f"<div style='margin-left:{(nivel+1)*20}px'>", unsafe_allow_html=True)
-            for filho in sorted(filhos, key=lambda r: r["nome"]):
-                _bloco_categoria(filho, cats_df, filhos_map, nivel + 1)
-            st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("<div style='margin-bottom:6px'></div>", unsafe_allow_html=True)
 
 
 # ── Aba Categorias ────────────────────────────────────────────────────────────
@@ -97,19 +153,18 @@ with tab_cats:
 
         with col_desp:
             if pais_desp:
-                st.markdown("**Despesas**")
-                for p in pais_desp:
-                    _bloco_categoria(p, cats_df, filhos_map, nivel=0)
+                st.markdown("### 🔴 Despesas")
+                for p in sorted(pais_desp, key=lambda r: r["nome"]):
+                    _bloco_categoria(p, filhos_map)
+
         with col_rec:
             if pais_rec:
-                st.markdown("**Receitas**")
-                for p in pais_rec:
-                    _bloco_categoria(p, cats_df, filhos_map, nivel=0)
+                st.markdown("### 🟢 Receitas")
+                for p in sorted(pais_rec, key=lambda r: r["nome"]):
+                    _bloco_categoria(p, filhos_map)
 
     st.markdown("---")
     st.subheader("Nova Categoria")
-    _NAT_OPTS   = ["nao_classificado", "fixo", "variavel"]
-    _NAT_LABELS = {"nao_classificado": "Não classificado", "fixo": "Fixo", "variavel": "Variável"}
     with st.form("nova_cat"):
         c1, c2, c3, c4 = st.columns(4)
         nome_novo = c1.text_input("Nome *")
@@ -131,10 +186,13 @@ with tab_cats:
                     if not match.empty:
                         parent_id = int(match.iloc[0]["id"])
                         tipo_novo = match.iloc[0]["tipo"]
-                criar_categoria(nome_novo.strip(), tipo_novo, cor_nova,
-                                parent_id=parent_id, natureza=nat_novo, user_id=uid)
-                st.success(f"Categoria '{nome_novo}' criada!")
-                st.rerun()
+                try:
+                    criar_categoria(nome_novo.strip(), tipo_novo, cor_nova,
+                                    parent_id=parent_id, natureza=nat_novo, user_id=uid)
+                    st.success(f"Categoria '{nome_novo}' criada!")
+                    st.rerun()
+                except ValueError as e:
+                    st.error(str(e))
 
 
 # ── Aba Contas ────────────────────────────────────────────────────────────────
