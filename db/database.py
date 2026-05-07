@@ -232,6 +232,27 @@ def init_db():
         except Exception:
             pass  # coluna já existe
 
+    # ── Normaliza user_id: migra categorias de email-based para id inteiro ───
+    with engine.begin() as conn:
+        users = conn.execute(text("SELECT id, email FROM usuarios")).fetchall()
+        for int_id, email in users:
+            uid_str = str(int_id)
+            email_cats = conn.execute(text(
+                "SELECT id, nome, tipo FROM categorias WHERE user_id = :email"
+            ), {"email": email}).fetchall()
+            for old_cat_id, nome, tipo in email_cats:
+                int_cat = conn.execute(text(
+                    "SELECT id FROM categorias WHERE nome = :nome AND tipo = :tipo AND user_id = :uid"
+                ), {"nome": nome, "tipo": tipo, "uid": uid_str}).fetchone()
+                if int_cat:
+                    conn.execute(text(
+                        "UPDATE transacoes SET categoria_id = :nid WHERE categoria_id = :oid"
+                    ), {"nid": int_cat[0], "oid": old_cat_id})
+                    conn.execute(text(
+                        "UPDATE subcategorias SET categoria_id = :nid WHERE categoria_id = :oid"
+                    ), {"nid": int_cat[0], "oid": old_cat_id})
+                conn.execute(text("DELETE FROM categorias WHERE id = :id"), {"id": old_cat_id})
+
     # ── Remove duplicatas de categorias (mesmo nome + user_id) ──────────────
     with engine.begin() as conn:
         dups = conn.execute(text("""
