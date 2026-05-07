@@ -220,17 +220,18 @@ def init_db():
         except Exception:
             pass  # coluna já existe
 
-    # ── PostgreSQL: migra UNIQUE(nome) → UNIQUE(nome, user_id) ───────────────
+    # ── PostgreSQL: constraint UNIQUE(nome, user_id, parent_id) ─────────────
     if dialect() == "postgresql":
         for ddl in [
             "ALTER TABLE categorias DROP CONSTRAINT IF EXISTS categorias_nome_key",
-            "ALTER TABLE categorias ADD CONSTRAINT categorias_nome_user_uq UNIQUE(nome, user_id)",
+            "ALTER TABLE categorias DROP CONSTRAINT IF EXISTS categorias_nome_user_uq",
+            "ALTER TABLE categorias ADD CONSTRAINT categorias_nome_parent_user_uq UNIQUE(nome, user_id, parent_id)",
         ]:
             try:
                 with engine.begin() as _conn:
                     _conn.execute(text(ddl))
             except Exception:
-                pass  # constraint já migrada
+                pass
 
     # ── Categorias padrão para o usuário 'default' (banco local/legado) ───────
     with engine.begin() as conn:
