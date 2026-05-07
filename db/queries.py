@@ -54,6 +54,13 @@ def autenticar(email: str, senha: str) -> tuple[str, str] | None:
     return None
 
 
+def atualizar_senha(user_id: str, nova_senha: str):
+    _write(
+        "UPDATE usuarios SET senha_hash = :h WHERE id = :id",
+        {"h": _hash_senha(nova_senha), "id": int(user_id)},
+    )
+
+
 def _read(sql: str, params: dict = None) -> pd.DataFrame:
     with get_engine().connect() as conn:
         return pd.read_sql(text(sql), conn, params=params or {})

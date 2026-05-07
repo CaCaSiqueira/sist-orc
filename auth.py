@@ -63,12 +63,13 @@ def _show_login_page():
         senha = st.text_input("Senha", type="password")
 
         if st.button("Entrar", type="primary", use_container_width=True):
-            from db.queries import autenticar, get_usuario, criar_usuario
+            from db.queries import autenticar, get_usuario
 
             usuario = get_usuario(email)
+            senha_configurada = usuario and usuario.get("senha_hash", "")
 
-            if usuario:
-                # Usuário já existe no banco — verifica senha
+            if senha_configurada:
+                # Usuário com senha — autentica normalmente
                 result = autenticar(email, senha)
                 if result:
                     _set_session(*result)
@@ -76,8 +77,8 @@ def _show_login_page():
                 else:
                     st.error("Senha incorreta.")
             else:
-                # Usuário não existe no banco — tenta migrar de st.secrets
-                migrado = _migrar_de_secrets(email, senha)
+                # Sem hash (novo usuário ou hash vazio) — tenta migrar de st.secrets
+                migrado = _migrar_de_secrets(email, senha, usuario)
                 if migrado:
                     result = autenticar(email, senha)
                     if result:
@@ -87,14 +88,19 @@ def _show_login_page():
                     st.error("E-mail ou senha incorretos.")
 
 
-def _migrar_de_secrets(email: str, senha: str) -> bool:
-    """Se o e-mail/senha estiver em st.secrets, cria o usuário no banco (migração única)."""
+def _migrar_de_secrets(email: str, senha: str, usuario_existente: dict | None) -> bool:
+    """Se o e-mail/senha estiver em st.secrets, grava o hash no banco (migração única)."""
     try:
         users = dict(st.secrets.get("users", {}))
         if email in users and users[email] == senha:
-            from db.queries import criar_usuario
-            nome = email.split("@")[0].replace(".", " ").title()
-            criar_usuario(email, nome, senha)
+            from db.queries import criar_usuario, atualizar_senha
+            if usuario_existente:
+                # Usuário existe mas sem hash — grava a senha
+                atualizar_senha(usuario_existente["id"], senha)
+            else:
+                # Usuário não existe — cria completo
+                nome = email.split("@")[0].replace(".", " ").title()
+                criar_usuario(email, nome, senha)
             return True
     except Exception:
         pass
