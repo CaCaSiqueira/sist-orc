@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-from auth import require_login, sidebar_user
 from auth import require_login, sidebar_user, is_admin
 from db.queries import (
     listar_transacoes, listar_categorias, opcoes_categoria,
@@ -110,55 +109,74 @@ display["data"] = pd.to_datetime(display["data"], errors="coerce").dt.date
 display["valor_fmt"] = display.apply(
     lambda r: f"+{fmt(r['valor'])}" if r["tipo"] == "receita" else f"-{fmt(r['valor'])}", axis=1
 )
+display["excluir"] = False   # coluna de seleção para exclusão
 
 edited = st.data_editor(
-    display[["id", "data", "descricao", "valor_fmt", "tipo", "categoria", "conta", "banco", "observacao"]],
+    display[["excluir", "id", "data", "descricao", "valor_fmt", "tipo", "categoria", "conta", "banco", "observacao"]],
     column_config={
-        "id": None,
-        "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
-        "descricao": st.column_config.TextColumn("Descrição", width="large"),
-        "valor_fmt": st.column_config.TextColumn("Valor", disabled=True),
-        "tipo": st.column_config.SelectboxColumn("Tipo", options=["despesa", "receita"]),
-        "categoria": st.column_config.SelectboxColumn(
-            "Categoria",
-            options=todas_labels,
-            help="↳ = subcategoria",
-        ),
-        "conta": st.column_config.TextColumn("Conta", disabled=True),
-        "banco": st.column_config.TextColumn("Banco", disabled=True),
+        "excluir":    st.column_config.CheckboxColumn("🗑️", width="small", help="Marque para excluir"),
+        "id":         None,
+        "data":       st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+        "descricao":  st.column_config.TextColumn("Descrição", width="large"),
+        "valor_fmt":  st.column_config.TextColumn("Valor", disabled=True),
+        "tipo":       st.column_config.SelectboxColumn("Tipo", options=["despesa", "receita"]),
+        "categoria":  st.column_config.SelectboxColumn("Categoria", options=todas_labels, help="↳ = subcategoria"),
+        "conta":      st.column_config.TextColumn("Conta", disabled=True),
+        "banco":      st.column_config.TextColumn("Banco", disabled=True),
         "observacao": st.column_config.TextColumn("Obs."),
     },
     hide_index=True,
     use_container_width=True,
 )
 
-if st.button("💾 Salvar alterações"):
-    for i, row in edited.iterrows():
-        orig = display.iloc[i]
-        tid = int(orig["id"])
-        if row["descricao"] != orig["descricao"]:
-            atualizar_transacao(tid, "descricao", row["descricao"])
-        if row["tipo"] != orig["tipo"]:
-            atualizar_transacao(tid, "tipo", row["tipo"])
-        if row.get("categoria") != orig.get("categoria"):
-            nova_sel = cat_label_to_id.get(row.get("categoria"))
-            if nova_sel:
-                if nova_sel["type"] == "subcategoria":
-                    atualizar_transacao(tid, "categoria_id", nova_sel["cat_id"])
-                    atualizar_transacao(tid, "subcategoria_id", nova_sel["id"])
-                else:
-                    atualizar_transacao(tid, "categoria_id", nova_sel["id"])
-                    atualizar_transacao(tid, "subcategoria_id", None)
-        if str(row.get("observacao", "")) != str(orig.get("observacao", "")):
-            atualizar_transacao(tid, "observacao", row.get("observacao"))
-    st.success("Alterações salvas!")
-    st.rerun()
+# ── Barra de ações ────────────────────────────────────────────────────────────
+selecionadas_excluir = edited[edited["excluir"] == True]
+col_salvar, col_excluir, col_info = st.columns([2, 2, 4])
 
-# ── Excluir ───────────────────────────────────────────────────────────────────
-st.markdown("---")
-with st.expander("🗑️ Excluir transação"):
-    id_excluir = st.number_input("ID da transação", min_value=1, step=1)
-    if st.button("Excluir", type="secondary"):
-        excluir_transacao(int(id_excluir))
-        st.success(f"Transação {id_excluir} excluída.")
+with col_salvar:
+    if st.button("💾 Salvar alterações", use_container_width=True):
+        for i, row in edited.iterrows():
+            orig = display.iloc[i]
+            tid = int(orig["id"])
+            if row["descricao"] != orig["descricao"]:
+                atualizar_transacao(tid, "descricao", row["descricao"])
+            if row["tipo"] != orig["tipo"]:
+                atualizar_transacao(tid, "tipo", row["tipo"])
+            if row.get("categoria") != orig.get("categoria"):
+                nova_sel = cat_label_to_id.get(row.get("categoria"))
+                if nova_sel:
+                    if nova_sel["type"] == "subcategoria":
+                        atualizar_transacao(tid, "categoria_id", nova_sel["cat_id"])
+                        atualizar_transacao(tid, "subcategoria_id", nova_sel["id"])
+                    else:
+                        atualizar_transacao(tid, "categoria_id", nova_sel["id"])
+                        atualizar_transacao(tid, "subcategoria_id", None)
+            if str(row.get("observacao", "")) != str(orig.get("observacao", "")):
+                atualizar_transacao(tid, "observacao", row.get("observacao"))
+        st.success("Alterações salvas!")
+        st.rerun()
+
+with col_excluir:
+    qtd = len(selecionadas_excluir)
+    btn_label = f"🗑️ Excluir {qtd} selecionada(s)" if qtd else "🗑️ Excluir selecionadas"
+    if st.button(btn_label, disabled=qtd == 0, type="secondary", use_container_width=True):
+        st.session_state["_confirmar_exclusao"] = True
+
+with col_info:
+    if qtd:
+        st.caption(f"⚠️ {qtd} transação(ões) marcada(s) para exclusão. Clique no botão para confirmar.")
+
+# ── Confirmação de exclusão ───────────────────────────────────────────────────
+if st.session_state.get("_confirmar_exclusao") and len(selecionadas_excluir) > 0:
+    ids_excluir = [int(display.iloc[i]["id"]) for i in selecionadas_excluir.index]
+    st.warning(f"⚠️ Tem certeza que deseja excluir **{len(ids_excluir)} transação(ões)**? Esta ação não pode ser desfeita.")
+    c1, c2, _ = st.columns([1, 1, 4])
+    if c1.button("✅ Sim, excluir", type="primary"):
+        for tid in ids_excluir:
+            excluir_transacao(tid)
+        st.session_state.pop("_confirmar_exclusao", None)
+        st.success(f"{len(ids_excluir)} transação(ões) excluída(s)!")
+        st.rerun()
+    if c2.button("❌ Cancelar"):
+        st.session_state.pop("_confirmar_exclusao", None)
         st.rerun()
