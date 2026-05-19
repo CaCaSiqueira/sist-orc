@@ -303,6 +303,25 @@ def remover_transacoes_duplicadas(user_id=_UID) -> int:
     return removidos
 
 
+def buscar_transacoes_existentes_por_periodo(banco: str, data_inicio: str, data_fim: str, user_id=_UID) -> set:
+    """Retorna set de tuplas (data, valor, tipo) já existentes no banco nesse período."""
+    df = _read("""
+        SELECT t.data, t.valor, t.tipo
+        FROM transacoes t
+        JOIN contas c ON t.conta_id = c.id
+        WHERE c.banco = :banco
+          AND t.data >= :inicio
+          AND t.data <= :fim
+          AND t.user_id = :uid
+    """, {"banco": banco, "inicio": data_inicio, "fim": data_fim, "uid": user_id})
+    if df.empty:
+        return set()
+    return {
+        (str(row["data"])[:10], float(row["valor"]), str(row["tipo"]))
+        for _, row in df.iterrows()
+    }
+
+
 def verificar_importacao_duplicada(hash_arquivo: str, user_id=_UID):
     """Retorna dict com info da importacao anterior se o arquivo ja foi importado, senão None."""
     df = _read(

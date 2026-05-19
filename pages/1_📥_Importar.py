@@ -7,6 +7,7 @@ from db.queries import (
     get_ou_criar_conta, registrar_importacao, inserir_transacoes,
     atualizar_natureza_categoria, criar_categoria,
     verificar_importacao_duplicada, verificar_periodo_ja_importado,
+    buscar_transacoes_existentes_por_periodo,
 )
 from parsers import nubank, mercado_pago, banco_brasil
 
@@ -184,16 +185,38 @@ with st.expander("➕ Criar nova categoria", expanded=False):
 
 # ── Monta linhas ──────────────────────────────────────────────────────────────
 if st.session_state.get("_imp_rows") is None:
+    # Busca transações já existentes no mesmo período para detectar duplicatas
+    if not df_parsed.empty:
+        datas_parsed = pd.to_datetime(df_parsed["data"])
+        _dt_ini = datas_parsed.min().strftime("%Y-%m-%d")
+        _dt_fim = datas_parsed.max().strftime("%Y-%m-%d")
+        existentes = buscar_transacoes_existentes_por_periodo(
+            banco_key, _dt_ini, _dt_fim, user_id=uid
+        )
+    else:
+        existentes = set()
+
     linhas = []
+    duplicatas_encontradas = 0
     for _, row in df_parsed.iterrows():
-        opts = labels_cat_rec if row["tipo"] == "receita" else labels_cat_desp
-        cat = opts[0] if opts else ""
+        opts  = labels_cat_rec if row["tipo"] == "receita" else labels_cat_desp
+        cat   = opts[0] if opts else ""
+        data  = pd.to_datetime(row["data"]).date()
+        valor = float(row["valor"])
+        tipo  = row["tipo"]
+
+        chave = (str(data), valor, tipo)
+        ja_existe = chave in existentes
+        if ja_existe:
+            duplicatas_encontradas += 1
+
         linhas.append({
-            "incluir":      True,
-            "data":         pd.to_datetime(row["data"]).date(),
+            "incluir":      not ja_existe,   # desmarca automático se duplicata
+            "⚠️":           "⚠️ já existe" if ja_existe else "",
+            "data":         data,
             "descricao":    row["descricao"],
-            "valor":        float(row["valor"]),
-            "tipo":         row["tipo"],
+            "valor":        valor,
+            "tipo":         tipo,
             "categoria":    cat,
             "subcategoria": "",
             "natureza":     nat_map.get(cat, "nao_classificado"),
@@ -201,6 +224,14 @@ if st.session_state.get("_imp_rows") is None:
             "_conta_nome":  row["conta_nome"],
             "_conta_tipo":  row["conta_tipo"],
         })
+
+    if duplicatas_encontradas:
+        st.warning(
+            f"⚠️ **{duplicatas_encontradas} transação(ões) com mesma data e valor já existem** "
+            f"no banco e foram **desmarcadas automaticamente**. "
+            f"Revise antes de salvar."
+        )
+
     st.session_state["_imp_rows"] = linhas
 
 
@@ -224,6 +255,7 @@ edited = st.data_editor(
     pd.DataFrame(st.session_state["_imp_rows"]),
     column_config={
         "incluir":      st.column_config.CheckboxColumn("✓", width="small"),
+        "⚠️":           st.column_config.TextColumn("Aviso", width="small"),
         "data":         st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
         "descricao":    st.column_config.TextColumn("Descrição", width="large"),
         "valor":        st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
