@@ -16,16 +16,26 @@ sidebar_user()
 st.title("📥 Importar Extrato")
 
 BANCOS = {
-    "Nubank (CSV fatura ou conta)": ("nubank", nubank),
-    "Mercado Pago (CSV ou XLSX)": ("mercado_pago", mercado_pago),
-    "Banco do Brasil (OFX, XLS, CSV)": ("bb", banco_brasil),
+    "Nubank — Fatura (Cartão de Crédito)": ("nubank",       nubank,        "cartao_credito"),
+    "Nubank — Conta Corrente":             ("nubank",       nubank,        "conta_corrente"),
+    "Mercado Pago":                        ("mercado_pago", mercado_pago,  "carteira_digital"),
+    "Banco do Brasil — Conta Corrente":    ("bb",           banco_brasil,  "conta_corrente"),
+    "Banco do Brasil — Poupança":          ("bb",           banco_brasil,  "poupanca"),
+}
+CONTA_TIPO_LABELS = {
+    "cartao_credito":   "💳 Cartão de Crédito",
+    "conta_corrente":   "🏦 Conta Corrente",
+    "carteira_digital": "📱 Carteira Digital",
+    "poupanca":         "💰 Poupança",
 }
 NATUREZA_OPTS   = ["nao_classificado", "fixo", "variavel"]
 NATUREZA_LABELS = {"nao_classificado": "Não classificado", "fixo": "Fixo", "variavel": "Variável"}
 SUB_NONE        = "(nenhuma)"
 
-banco_label = st.selectbox("Banco / Cartão", list(BANCOS.keys()))
-banco_key, parser_mod = BANCOS[banco_label]
+banco_label = st.selectbox("Banco / Tipo de conta", list(BANCOS.keys()))
+banco_key, parser_mod, conta_tipo_importacao = BANCOS[banco_label]
+
+st.info(f"Tipo de conta: **{CONTA_TIPO_LABELS[conta_tipo_importacao]}**")
 
 uploaded = st.file_uploader(
     "Selecione o arquivo de extrato",
@@ -239,7 +249,7 @@ if st.button("💾 Salvar transações selecionadas", type="primary", disabled=l
     novas_criadas = 0
 
     for _, row in selecionadas.iterrows():
-        conta_id  = get_ou_criar_conta(row["_conta_nome"], row["_banco"], row["_conta_tipo"], user_id=uid)
+        conta_id  = get_ou_criar_conta(row["_conta_nome"], row["_banco"], conta_tipo_importacao, user_id=uid)
         nat       = row.get("natureza") or "nao_classificado"
         sub_texto = str(row.get("subcategoria") or "").strip()
         cat_nome  = row.get("categoria") or ""
