@@ -1,10 +1,11 @@
 import streamlit as st
 import pandas as pd
 from auth import require_login, sidebar_user
+import hashlib
 from db.queries import (
     listar_categorias, listar_subcategorias, listar_categorias_arvore,
     get_ou_criar_conta, registrar_importacao, inserir_transacoes,
-    atualizar_natureza_categoria, criar_categoria,
+    atualizar_natureza_categoria, criar_categoria, verificar_importacao_duplicada,
 )
 from parsers import nubank, mercado_pago, banco_brasil
 
@@ -40,15 +41,34 @@ file_key = f"{uploaded.name}_{uploaded.size}"
 if st.session_state.get("_imp_file_key") != file_key:
     with st.spinner("Lendo arquivo..."):
         try:
-            df_parsed = parser_mod.parse(uploaded.read(), uploaded.name)
+            file_bytes = uploaded.read()
+            file_hash  = hashlib.md5(file_bytes).hexdigest()
+            df_parsed  = parser_mod.parse(file_bytes, uploaded.name)
         except Exception as e:
             st.error(f"Erro ao ler o arquivo: {e}")
             st.stop()
-    st.session_state["_imp_file_key"]  = file_key
-    st.session_state["_imp_df_parsed"] = df_parsed
-    st.session_state["_imp_rows"]      = None
+
+    # ── Verifica duplicata ────────────────────────────────────────────────────
+    duplicata = verificar_importacao_duplicada(file_hash, user_id=uid)
+    if duplicata:
+        st.warning(
+            f"⚠️ **Este arquivo já foi importado antes!**\n\n"
+            f"- 📄 Arquivo: `{duplicata['arquivo']}`\n"
+            f"- 🏦 Banco: `{duplicata['banco']}`\n"
+            f"- 📊 Transações na época: `{duplicata['total']}`\n"
+            f"- 📅 Importado em: `{duplicata['importado_em']}`\n\n"
+            f"Importar novamente vai **duplicar as transações**."
+        )
+        if not st.checkbox("⚠️ Entendi, quero importar mesmo assim"):
+            st.stop()
+
+    st.session_state["_imp_file_key"]   = file_key
+    st.session_state["_imp_df_parsed"]  = df_parsed
+    st.session_state["_imp_file_hash"]  = file_hash
+    st.session_state["_imp_rows"]       = None
 else:
-    df_parsed = st.session_state["_imp_df_parsed"]
+    df_parsed  = st.session_state["_imp_df_parsed"]
+    file_hash  = st.session_state.get("_imp_file_hash", "")
 
 st.success(f"{len(df_parsed)} transações encontradas.")
 
@@ -201,7 +221,7 @@ st.caption(f"{len(selecionadas)} de {len(edited)} transações selecionadas.")
 
 # ── Salvar ────────────────────────────────────────────────────────────────────
 if st.button("💾 Salvar transações selecionadas", type="primary", disabled=len(selecionadas) == 0):
-    imp_id = registrar_importacao(uploaded.name, banco_key, len(selecionadas), user_id=uid)
+    imp_id = registrar_importacao(uploaded.name, banco_key, len(selecionadas), user_id=uid, hash_arquivo=file_hash)
 
     # sub_cache: chave_lower → {"cat_id": int, "sub_id": int}
     sub_cache: dict = {}

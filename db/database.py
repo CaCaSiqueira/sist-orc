@@ -224,6 +224,7 @@ def init_db():
         "ALTER TABLE parcelamentos ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'",
         "ALTER TABLE investimentos ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'",
         "ALTER TABLE transacoes ADD COLUMN subcategoria_id INTEGER",
+        "ALTER TABLE importacoes ADD COLUMN hash_arquivo TEXT",
     ]
     for ddl in migrations:
         try:

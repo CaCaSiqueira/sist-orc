@@ -260,11 +260,30 @@ def get_ou_criar_conta(nome, banco, tipo, user_id=_UID):
 
 # ── Importações ───────────────────────────────────────────────────────────────
 
-def registrar_importacao(arquivo, banco, total, user_id=_UID):
+def verificar_importacao_duplicada(hash_arquivo: str, user_id=_UID):
+    """Retorna dict com info da importacao anterior se o arquivo ja foi importado, senão None."""
+    df = _read(
+        "SELECT id, arquivo, banco, total_transacoes, importado_em "
+        "FROM importacoes WHERE hash_arquivo = :hash AND user_id = :uid",
+        {"hash": hash_arquivo, "uid": user_id},
+    )
+    if df.empty:
+        return None
+    row = df.iloc[0]
+    return {
+        "id":          int(row["id"]),
+        "arquivo":     str(row["arquivo"]),
+        "banco":       str(row["banco"]),
+        "total":       int(row["total_transacoes"]) if row["total_transacoes"] else 0,
+        "importado_em": str(row["importado_em"]),
+    }
+
+
+def registrar_importacao(arquivo, banco, total, user_id=_UID, hash_arquivo=None):
     return _insert_returning_id(
-        "INSERT INTO importacoes (arquivo, banco, total_transacoes, user_id) "
-        "VALUES (:arquivo, :banco, :total, :uid) RETURNING id",
-        {"arquivo": arquivo, "banco": banco, "total": total, "uid": user_id},
+        "INSERT INTO importacoes (arquivo, banco, total_transacoes, user_id, hash_arquivo) "
+        "VALUES (:arquivo, :banco, :total, :uid, :hash) RETURNING id",
+        {"arquivo": arquivo, "banco": banco, "total": total, "uid": user_id, "hash": hash_arquivo},
     )
 
 
