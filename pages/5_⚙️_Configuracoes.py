@@ -1,12 +1,13 @@
 import streamlit as st
 import pandas as pd
-from auth import require_login, sidebar_user
+from auth import require_login, sidebar_user, is_admin
 from db.queries import (
     listar_categorias, listar_categorias_arvore, criar_categoria,
     editar_categoria, excluir_categoria,
     editar_subcategoria, excluir_subcategoria,
     listar_contas, criar_conta,
     listar_importacoes,
+    criar_usuario, listar_usuarios, excluir_usuario, email_cadastrado,
 )
 
 st.set_page_config(page_title="Configurações", page_icon="⚙️", layout="wide")
@@ -15,7 +16,15 @@ sidebar_user()
 
 st.title("⚙️ Configurações")
 
-tab_cats, tab_contas, tab_imports = st.tabs(["🏷️ Categorias", "🏦 Contas", "📁 Importações"])
+_tabs = ["🏷️ Categorias", "🏦 Contas", "📁 Importações"]
+if is_admin(uid):
+    _tabs.append("👥 Usuários")
+
+_tab_results = st.tabs(_tabs)
+tab_cats   = _tab_results[0]
+tab_contas = _tab_results[1]
+tab_imports = _tab_results[2]
+tab_users  = _tab_results[3] if is_admin(uid) else None
 
 _NAT_OPTS   = ["nao_classificado", "fixo", "variavel"]
 _NAT_LABELS = {"nao_classificado": "Não classificado", "fixo": "Fixo", "variavel": "Variável"}
@@ -218,3 +227,71 @@ with tab_imports:
         st.dataframe(imports, use_container_width=True, hide_index=True)
     else:
         st.info("Nenhuma importação realizada ainda.")
+
+
+# ── Aba Usuários (somente admin) ──────────────────────────────────────────────
+if tab_users is not None:
+    with tab_users:
+        st.subheader("Gerenciar Usuários")
+
+        # Lista de usuários existentes
+        usuarios_df = listar_usuarios()
+        if not usuarios_df.empty:
+            st.markdown("**Usuários cadastrados**")
+            for _, row in usuarios_df.iterrows():
+                col_info, col_del = st.columns([5, 1])
+                with col_info:
+                    st.markdown(f"👤 **{row['nome']}** — `{row['email']}`")
+                with col_del:
+                    is_self = str(row["id"]) == str(uid)
+                    if not is_self:
+                        if st.button("🗑️", key=f"del_user_{row['id']}", help="Excluir usuário"):
+                            excluir_usuario(int(row["id"]))
+                            st.success(f"Usuário {row['email']} removido.")
+                            st.rerun()
+                    else:
+                        st.caption("(você)")
+        else:
+            st.info("Nenhum usuário cadastrado no banco ainda.")
+
+        st.markdown("---")
+        st.subheader("Adicionar Novo Usuário")
+        with st.form("novo_usuario", clear_on_submit=True):
+            c1, c2 = st.columns(2)
+            novo_nome  = c1.text_input("Nome completo *")
+            novo_email = c2.text_input("E-mail *", placeholder="usuario@email.com")
+            c3, c4 = st.columns(2)
+            nova_senha  = c3.text_input("Senha *", type="password")
+            conf_senha  = c4.text_input("Confirmar senha *", type="password")
+
+            submitted = st.form_submit_button("➕ Cadastrar Usuário", type="primary")
+            if submitted:
+                erros = []
+                if not novo_nome.strip():
+                    erros.append("Informe o nome.")
+                if not novo_email.strip():
+                    erros.append("Informe o e-mail.")
+                if not nova_senha:
+                    erros.append("Informe a senha.")
+                elif nova_senha != conf_senha:
+                    erros.append("As senhas não conferem.")
+                elif len(nova_senha) < 6:
+                    erros.append("A senha deve ter pelo menos 6 caracteres.")
+                if not erros and email_cadastrado(novo_email):
+                    erros.append("Este e-mail já está cadastrado.")
+
+                if erros:
+                    for e in erros:
+                        st.error(e)
+                else:
+                    criar_usuario(novo_email.strip(), novo_nome.strip(), nova_senha)
+                    st.success(f"✅ Usuário **{novo_nome.strip()}** cadastrado com sucesso!")
+                    st.rerun()
+
+        st.markdown("---")
+        st.info(
+            "💡 **Dica de bootstrap:** Enquanto o bloco `[users]` existir no secrets.toml, "
+            "você pode entrar com as credenciais de lá mesmo sem estar no banco. "
+            "Após criar sua conta acima, remova o bloco `[users]` dos secrets para maior segurança.",
+            icon="🔐",
+        )

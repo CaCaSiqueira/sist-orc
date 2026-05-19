@@ -1,15 +1,15 @@
 import hashlib
 import os
 import base64
-
 import pandas as pd
 from sqlalchemy import text
 from .database import get_engine, dialect
 
-_UID = "default"  # fallback quando não há login
-
 
 # ── Usuários ──────────────────────────────────────────────────────────────────
+
+_UID = "default"  # fallback quando não há login
+
 
 def _hash_senha(senha: str) -> str:
     salt = os.urandom(16)
@@ -29,7 +29,7 @@ def _verificar_senha(senha: str, armazenado: str) -> bool:
 def get_usuario(email: str) -> dict | None:
     row = _read(
         "SELECT id, nome, senha_hash FROM usuarios WHERE email = :e",
-        {"e": email},
+        {"e": email.lower().strip()},
     )
     if row.empty:
         return None
@@ -41,7 +41,7 @@ def criar_usuario(email: str, nome: str, senha: str) -> str:
     """Cria usuário com senha criptografada. Retorna user_id como string."""
     uid = _insert_returning_id(
         "INSERT INTO usuarios (email, nome, senha_hash) VALUES (:e, :n, :h) RETURNING id",
-        {"e": email, "n": nome, "h": _hash_senha(senha)},
+        {"e": email.lower().strip(), "n": nome.strip(), "h": _hash_senha(senha)},
     )
     return str(uid)
 
@@ -59,6 +59,19 @@ def atualizar_senha(user_id: str, nova_senha: str):
         "UPDATE usuarios SET senha_hash = :h WHERE id = :id",
         {"h": _hash_senha(nova_senha), "id": int(user_id)},
     )
+
+
+def listar_usuarios():
+    return _read("SELECT id, email, nome, criado_em FROM usuarios ORDER BY nome")
+
+
+def excluir_usuario(id_: int):
+    _write("DELETE FROM usuarios WHERE id = :id", {"id": id_})
+
+
+def email_cadastrado(email: str) -> bool:
+    df = _read("SELECT id FROM usuarios WHERE email = :email", {"email": email.lower().strip()})
+    return not df.empty
 
 
 def _read(sql: str, params: dict = None) -> pd.DataFrame:
