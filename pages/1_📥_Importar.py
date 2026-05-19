@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 from auth import require_login, sidebar_user
 from db.queries import (
-    listar_categorias, get_ou_criar_conta,
-    registrar_importacao, inserir_transacoes,
+    listar_categorias, listar_subcategorias, listar_categorias_arvore,
+    get_ou_criar_conta, registrar_importacao, inserir_transacoes,
     atualizar_natureza_categoria, criar_categoria,
 )
 from parsers import nubank, mercado_pago, banco_brasil
@@ -55,15 +55,17 @@ st.success(f"{len(df_parsed)} transações encontradas.")
 
 # ── Helpers de categorias ─────────────────────────────────────────────────────
 def _build_cat_maps():
-    cats = listar_categorias(user_id=uid)
-    pais   = cats[cats["parent_id"].isna()]
-    filhos = cats[cats["parent_id"].notna()]
-    pai_nome = dict(zip(cats["id"], cats["nome"]))
+    # pais: list[dict] com {id, nome, tipo, cor, natureza}
+    # filhos_map: {categoria_id: [{id, nome, cor, natureza, categoria_id, tipo}, ...]}
+    pais, filhos_map = listar_categorias_arvore(user_id=uid)
+    cats = listar_categorias(user_id=uid)  # DataFrame para uso no form de nova cat
+
+    pai_nome = {int(p["id"]): p["nome"] for p in pais}
 
     def _labels_pais(tipo):
-        df = pais[pais["tipo"] == tipo].sort_values("nome")
-        labels = df["nome"].tolist()
-        id_map = dict(zip(df["nome"], df["id"].astype(int)))
+        filtrado = sorted([p for p in pais if p["tipo"] == tipo], key=lambda x: x["nome"])
+        labels = [p["nome"] for p in filtrado]
+        id_map = {p["nome"]: int(p["id"]) for p in filtrado}
         return labels, id_map
 
     labels_cat_desp, id_cat_desp = _labels_pais("despesa")
@@ -72,13 +74,15 @@ def _build_cat_maps():
     id_cat_all     = {**id_cat_desp, **id_cat_rec}
 
     def _labels_subs(tipo):
-        df = filhos[filhos["tipo"] == tipo].sort_values("nome")
         labels = [SUB_NONE]
         id_map = {SUB_NONE: None}
-        for _, s in df.iterrows():
-            label = f"{pai_nome.get(int(s['parent_id']), '?')} › {s['nome']}"
-            labels.append(label)
-            id_map[label] = int(s["id"])
+        for cid, subs in filhos_map.items():
+            nome_pai = pai_nome.get(cid, "?")
+            for s in sorted(subs, key=lambda x: x["nome"]):
+                if s.get("tipo") == tipo:
+                    label = f"{nome_pai} › {s['nome']}"
+                    labels.append(label)
+                    id_map[label] = int(s["id"])
         return labels, id_map
 
     labels_sub_desp, id_sub_desp = _labels_subs("despesa")
@@ -87,7 +91,7 @@ def _build_cat_maps():
     labels_sub_all = [SUB_NONE] + labels_sub_all
     id_sub_all     = {**id_sub_desp, **id_sub_rec}
 
-    nat_map = dict(zip(cats["nome"], cats["natureza"].fillna("nao_classificado")))
+    nat_map = {p["nome"]: p.get("natureza") or "nao_classificado" for p in pais}
 
     return (
         labels_cat_desp, labels_cat_rec, labels_cat_all, id_cat_all,
@@ -199,11 +203,15 @@ st.caption(f"{len(selecionadas)} de {len(edited)} transações selecionadas.")
 if st.button("💾 Salvar transações selecionadas", type="primary", disabled=len(selecionadas) == 0):
     imp_id = registrar_importacao(uploaded.name, banco_key, len(selecionadas), user_id=uid)
 
+    # sub_cache: chave_lower → {"cat_id": int, "sub_id": int}
     sub_cache: dict = {}
+    subs_df = listar_subcategorias(user_id=uid)
     sub_existentes = {
-        s["nome"].strip().lower(): int(s["id"])
-        for _, s in listar_categorias(user_id=uid).iterrows()
-        if s["parent_id"] is not None and not pd.isna(s["parent_id"])
+        str(row["nome"]).strip().lower(): {
+            "cat_id": int(row["categoria_id"]),
+            "sub_id": int(row["id"]),
+        }
+        for _, row in subs_df.iterrows()
     }
 
     nat_atualizada: dict = {}
@@ -211,45 +219,55 @@ if st.button("💾 Salvar transações selecionadas", type="primary", disabled=l
     novas_criadas = 0
 
     for _, row in selecionadas.iterrows():
-        conta_id = get_ou_criar_conta(row["_conta_nome"], row["_banco"], row["_conta_tipo"], user_id=uid)
-        nat      = row.get("natureza") or "nao_classificado"
+        conta_id  = get_ou_criar_conta(row["_conta_nome"], row["_banco"], row["_conta_tipo"], user_id=uid)
+        nat       = row.get("natureza") or "nao_classificado"
         sub_texto = str(row.get("subcategoria") or "").strip()
         cat_nome  = row.get("categoria") or ""
         cat_id    = id_cat_all.get(cat_nome)
+        sub_id    = None
 
-        if sub_texto:
+        if sub_texto and cat_id:
             chave = sub_texto.lower()
             if chave in sub_cache:
-                cat_id = sub_cache[chave]
+                sub_id = sub_cache[chave]["sub_id"]
+                cat_id = sub_cache[chave]["cat_id"]
             elif chave in sub_existentes:
-                cat_id = sub_existentes[chave]
-            elif cat_id:
+                sub_id = sub_existentes[chave]["sub_id"]
+                cat_id = sub_existentes[chave]["cat_id"]
+            else:
                 tipo_pai = cats_df[cats_df["nome"] == cat_nome]["tipo"].values
                 tipo_pai = tipo_pai[0] if len(tipo_pai) else "despesa"
-                criar_categoria(sub_texto, tipo_pai, "#888888",
-                                parent_id=cat_id, natureza=nat, user_id=uid)
-                cats_fresh = listar_categorias(user_id=uid)
-                novo = cats_fresh[cats_fresh["nome"].str.lower() == chave]
-                if not novo.empty:
-                    novo_id = int(novo.iloc[0]["id"])
-                    sub_cache[chave] = novo_id
-                    sub_existentes[chave] = novo_id
-                    cat_id = novo_id
-                    novas_criadas += 1
+                try:
+                    criar_categoria(sub_texto, tipo_pai, "#888888",
+                                    parent_id=cat_id, natureza=nat, user_id=uid)
+                    subs_fresh = listar_subcategorias(user_id=uid)
+                    novo = subs_fresh[
+                        (subs_fresh["nome"].str.lower() == chave) &
+                        (subs_fresh["categoria_id"] == cat_id)
+                    ]
+                    if not novo.empty:
+                        novo_sub_id = int(novo.iloc[0]["id"])
+                        sub_cache[chave]    = {"cat_id": cat_id, "sub_id": novo_sub_id}
+                        sub_existentes[chave] = {"cat_id": cat_id, "sub_id": novo_sub_id}
+                        sub_id = novo_sub_id
+                        novas_criadas += 1
+                except Exception:
+                    pass  # subcategoria duplicada — ignora
 
         if cat_id and cat_id not in nat_atualizada:
             nat_atualizada[cat_id] = nat
             atualizar_natureza_categoria(cat_id, nat, user_id=uid)
 
         registros.append({
-            "data":          str(row["data"])[:10],
-            "descricao":     row["descricao"],
-            "valor":         float(row["valor"]),
-            "tipo":          row["tipo"],
-            "categoria_id":  cat_id,
-            "conta_id":      conta_id,
-            "observacao":    None,
-            "importacao_id": imp_id,
+            "data":            str(row["data"])[:10],
+            "descricao":       row["descricao"],
+            "valor":           float(row["valor"]),
+            "tipo":            row["tipo"],
+            "categoria_id":    cat_id,
+            "subcategoria_id": sub_id,
+            "conta_id":        conta_id,
+            "observacao":      None,
+            "importacao_id":   imp_id,
         })
 
     inserir_transacoes(registros, user_id=uid)

@@ -129,6 +129,11 @@ def _listar_subcategorias_df(tipo=None, user_id=_UID):
     return _read(sql, params)
 
 
+def listar_subcategorias(tipo=None, user_id=_UID):
+    """Retorna DataFrame com subcategorias do usuário (tabela subcategorias)."""
+    return _listar_subcategorias_df(tipo, user_id)
+
+
 def listar_categorias_arvore(tipo=None, user_id=_UID):
     pais = listar_categorias(tipo, user_id).to_dict("records")
     subs_df = _listar_subcategorias_df(tipo, user_id)
@@ -275,10 +280,13 @@ def listar_importacoes(user_id=_UID):
 def inserir_transacoes(transacoes: list[dict], user_id=_UID):
     for t in transacoes:
         t["user_id"] = user_id
+        if "subcategoria_id" not in t:
+            t["subcategoria_id"] = None
     _write_many(
         """INSERT INTO transacoes
-           (data, descricao, valor, tipo, categoria_id, conta_id, observacao, importacao_id, user_id)
-           VALUES (:data, :descricao, :valor, :tipo, :categoria_id, :conta_id,
+           (data, descricao, valor, tipo, categoria_id, subcategoria_id, conta_id,
+            observacao, importacao_id, user_id)
+           VALUES (:data, :descricao, :valor, :tipo, :categoria_id, :subcategoria_id, :conta_id,
                    :observacao, :importacao_id, :user_id)""",
         transacoes,
     )
