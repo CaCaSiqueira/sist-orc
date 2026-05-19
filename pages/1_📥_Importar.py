@@ -5,7 +5,8 @@ import hashlib
 from db.queries import (
     listar_categorias, listar_subcategorias, listar_categorias_arvore,
     get_ou_criar_conta, registrar_importacao, inserir_transacoes,
-    atualizar_natureza_categoria, criar_categoria, verificar_importacao_duplicada,
+    atualizar_natureza_categoria, criar_categoria,
+    verificar_importacao_duplicada, verificar_periodo_ja_importado,
 )
 from parsers import nubank, mercado_pago, banco_brasil
 
@@ -58,7 +59,7 @@ if st.session_state.get("_imp_file_key") != file_key:
             st.error(f"Erro ao ler o arquivo: {e}")
             st.stop()
 
-    # ── Verifica duplicata ────────────────────────────────────────────────────
+    # ── Verifica duplicata por hash (arquivo idêntico) ───────────────────────
     duplicata = verificar_importacao_duplicada(file_hash, user_id=uid)
     if duplicata:
         st.warning(
@@ -69,8 +70,24 @@ if st.session_state.get("_imp_file_key") != file_key:
             f"- 📅 Importado em: `{duplicata['importado_em']}`\n\n"
             f"Importar novamente vai **duplicar as transações**."
         )
-        if not st.checkbox("⚠️ Entendi, quero importar mesmo assim"):
+        if not st.checkbox("⚠️ Entendi, quero importar mesmo assim", key="dup_hash"):
             st.stop()
+    else:
+        # ── Verifica duplicata por período (mesmo banco, mesmo intervalo de datas)
+        if not df_parsed.empty:
+            datas      = pd.to_datetime(df_parsed["data"])
+            dt_inicio  = datas.min().strftime("%Y-%m-%d")
+            dt_fim     = datas.max().strftime("%Y-%m-%d")
+            mes_label  = datas.min().strftime("%m/%Y")
+            qtd_exist  = verificar_periodo_ja_importado(banco_key, dt_inicio, dt_fim, user_id=uid)
+            if qtd_exist > 0:
+                st.warning(
+                    f"⚠️ **Já existem {qtd_exist} transações do {banco_key.upper()} "
+                    f"no período {mes_label}!**\n\n"
+                    f"Importar novamente pode **duplicar as transações**."
+                )
+                if not st.checkbox("⚠️ Entendi, quero importar mesmo assim", key="dup_periodo"):
+                    st.stop()
 
     st.session_state["_imp_file_key"]   = file_key
     st.session_state["_imp_df_parsed"]  = df_parsed

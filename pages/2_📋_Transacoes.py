@@ -1,16 +1,31 @@
 import streamlit as st
 import pandas as pd
 from auth import require_login, sidebar_user
+from auth import require_login, sidebar_user, is_admin
 from db.queries import (
     listar_transacoes, listar_categorias, opcoes_categoria,
     listar_contas, atualizar_transacao, excluir_transacao,
+    remover_transacoes_duplicadas,
 )
+
 
 st.set_page_config(page_title="Transações", page_icon="📋", layout="wide")
 uid = require_login()
 sidebar_user()
 
 st.title("📋 Transações")
+
+# ── Limpeza de duplicatas (admin) ─────────────────────────────────────────────
+if is_admin(uid):
+    with st.expander("🛠️ Ferramentas de manutenção", expanded=False):
+        st.caption("Use apenas se houver transações duplicadas na listagem.")
+        if st.button("🗑️ Remover transações duplicadas", type="secondary"):
+            removidos = remover_transacoes_duplicadas(user_id=uid)
+            if removidos:
+                st.success(f"✅ {removidos} transação(ões) duplicada(s) removida(s)!")
+                st.rerun()
+            else:
+                st.info("Nenhuma duplicata encontrada.")
 
 cats_df = listar_categorias(user_id=uid)
 contas_df = listar_contas(user_id=uid)

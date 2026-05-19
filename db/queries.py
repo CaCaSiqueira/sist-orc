@@ -260,6 +260,49 @@ def get_ou_criar_conta(nome, banco, tipo, user_id=_UID):
 
 # ── Importações ───────────────────────────────────────────────────────────────
 
+def verificar_periodo_ja_importado(banco: str, data_inicio: str, data_fim: str, user_id=_UID) -> int:
+    """Retorna qtd de transacoes ja existentes do banco nesse periodo."""
+    df = _read("""
+        SELECT COUNT(*) AS total
+        FROM transacoes t
+        JOIN contas c ON t.conta_id = c.id
+        WHERE c.banco = :banco
+          AND t.data >= :inicio
+          AND t.data <= :fim
+          AND t.user_id = :uid
+    """, {"banco": banco, "inicio": data_inicio, "fim": data_fim, "uid": user_id})
+    return int(df.iloc[0]["total"]) if not df.empty else 0
+
+
+def remover_transacoes_duplicadas(user_id=_UID) -> int:
+    """Remove transacoes com mesmos (data, descricao, valor, tipo, conta_id).
+    Mantém a de menor id (primeira importada). Retorna quantidade removida."""
+    df = _read("""
+        SELECT MIN(id) AS keep_id, data, descricao, valor, tipo, conta_id
+        FROM transacoes
+        WHERE user_id = :uid
+        GROUP BY data, descricao, valor, tipo, conta_id
+        HAVING COUNT(*) > 1
+    """, {"uid": user_id})
+
+    removidos = 0
+    for _, row in df.iterrows():
+        ids = _read("""
+            SELECT id FROM transacoes
+            WHERE data = :data AND descricao = :desc AND valor = :valor
+              AND tipo = :tipo AND conta_id = :conta AND user_id = :uid
+              AND id != :keep
+        """, {
+            "data": row["data"], "desc": row["descricao"], "valor": row["valor"],
+            "tipo": row["tipo"], "conta": row["conta_id"], "uid": user_id,
+            "keep": int(row["keep_id"]),
+        })
+        for _, id_row in ids.iterrows():
+            _write("DELETE FROM transacoes WHERE id = :id", {"id": int(id_row["id"])})
+            removidos += 1
+    return removidos
+
+
 def verificar_importacao_duplicada(hash_arquivo: str, user_id=_UID):
     """Retorna dict com info da importacao anterior se o arquivo ja foi importado, senão None."""
     df = _read(
