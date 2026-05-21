@@ -241,7 +241,7 @@ if st.session_state.get("_imp_rows") is None:
             "valor":        valor,
             "tipo":         tipo,
             "categoria":    cat,
-            "subcategoria": "",
+            "subcategoria": SUB_NONE,
             "natureza":     nat_map.get(cat, "nao_classificado"),
             "_banco":       row["banco"],
             "_conta_nome":  row["conta_nome"],
@@ -284,7 +284,7 @@ edited = st.data_editor(
         "valor":        st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
         "tipo":         st.column_config.SelectboxColumn("Tipo", options=["despesa", "receita"]),
         "categoria":    st.column_config.SelectboxColumn("Categoria", options=labels_cat_all),
-        "subcategoria": st.column_config.TextColumn("Subcategoria"),
+        "subcategoria": st.column_config.SelectboxColumn("Subcategoria", options=labels_sub_all),
         "natureza":     st.column_config.SelectboxColumn("Natureza", options=NATUREZA_OPTS),
         "_banco":      None,
         "_conta_nome": None,
@@ -324,11 +324,17 @@ if st.button("💾 Salvar transações selecionadas", type="primary", disabled=l
         conta_id  = get_ou_criar_conta(row["_conta_nome"], row["_banco"], conta_tipo_importacao, user_id=uid)
         nat       = row.get("natureza") or "nao_classificado"
         sub_texto = str(row.get("subcategoria") or "").strip()
+        # ignora a opção "(nenhuma)" do dropdown
+        if sub_texto == SUB_NONE:
+            sub_texto = ""
         cat_nome  = row.get("categoria") or ""
         cat_id    = id_cat_all.get(cat_nome)
         sub_id    = None
 
         if sub_texto and cat_id:
+            # label do dropdown pode ser "Categoria › Subcategoria" — extrai só o nome
+            if " › " in sub_texto:
+                sub_texto = sub_texto.split(" › ", 1)[1].strip()
             chave = sub_texto.lower()
             if chave in sub_cache:
                 sub_id = sub_cache[chave]["sub_id"]
