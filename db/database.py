@@ -109,7 +109,6 @@ def init_db():
                 nome TEXT NOT NULL,
                 tipo TEXT NOT NULL CHECK(tipo IN ('despesa', 'receita')),
                 cor TEXT DEFAULT '#888888',
-                parent_id INTEGER REFERENCES categorias(id) ON DELETE SET NULL,
                 natureza TEXT DEFAULT 'nao_classificado',
                 user_id TEXT NOT NULL DEFAULT 'default'
             )
@@ -153,7 +152,6 @@ def init_db():
                 id {pk},
                 descricao TEXT NOT NULL,
                 valor_total NUMERIC NOT NULL,
-                valor_parcela NUMERIC NOT NULL,
                 total_parcelas INTEGER NOT NULL,
                 parcelas_pagas INTEGER DEFAULT 0,
                 data_primeira_parcela TEXT NOT NULL,
@@ -196,6 +194,7 @@ def init_db():
                 categoria_id INTEGER NOT NULL REFERENCES categorias(id),
                 mes TEXT NOT NULL,
                 valor_limite NUMERIC NOT NULL,
+                user_id TEXT NOT NULL DEFAULT 'default',
                 UNIQUE(categoria_id, mes)
             )
         """))
@@ -206,8 +205,7 @@ def init_db():
                 cor TEXT DEFAULT '#888888',
                 natureza TEXT DEFAULT 'nao_classificado',
                 categoria_id INTEGER NOT NULL REFERENCES categorias(id) ON DELETE CASCADE,
-                user_id TEXT NOT NULL DEFAULT 'default',
-                UNIQUE(nome, categoria_id, user_id)
+                UNIQUE(nome, categoria_id)
             )
         """))
 
@@ -222,9 +220,12 @@ def init_db():
         "ALTER TABLE transacoes ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'",
         "ALTER TABLE importacoes ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'",
         "ALTER TABLE parcelamentos ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'",
+        "ALTER TABLE parcelamentos ADD COLUMN valor_parcela NUMERIC",  # legado; será dropado depois
         "ALTER TABLE investimentos ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'",
         "ALTER TABLE transacoes ADD COLUMN subcategoria_id INTEGER",
         "ALTER TABLE importacoes ADD COLUMN hash_arquivo TEXT",
+        "ALTER TABLE subcategorias ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'",
+        "ALTER TABLE orcamentos ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'",
     ]
     for ddl in migrations:
         try:
@@ -276,20 +277,20 @@ def init_db():
                 ), {"kid": keep_id, "did": del_id})
                 conn.execute(text("DELETE FROM categorias WHERE id = :did"), {"did": del_id})
 
-    # ── Remove duplicatas de subcategorias (mesmo nome + categoria_id + user_id)
+    # ── Remove duplicatas de subcategorias (mesmo nome + categoria_id) ───────
+    # Nota: agrupamos apenas por (nome, categoria_id) pois user_id será removido (3FN)
     with engine.begin() as conn:
         dups = conn.execute(text("""
-            SELECT nome, categoria_id, user_id, MIN(id) AS keep_id
+            SELECT nome, categoria_id, MIN(id) AS keep_id
             FROM subcategorias
-            GROUP BY nome, categoria_id, user_id
+            GROUP BY nome, categoria_id
             HAVING COUNT(*) > 1
         """)).fetchall()
         for dup in dups:
-            nome_d, cid_d, uid_d, keep_id = dup
+            nome_d, cid_d, keep_id = dup
             ids_to_del = conn.execute(text(
-                "SELECT id FROM subcategorias WHERE nome = :n AND categoria_id = :cid "
-                "AND user_id = :uid AND id != :kid"
-            ), {"n": nome_d, "cid": cid_d, "uid": uid_d, "kid": keep_id}).fetchall()
+                "SELECT id FROM subcategorias WHERE nome = :n AND categoria_id = :cid AND id != :kid"
+            ), {"n": nome_d, "cid": cid_d, "kid": keep_id}).fetchall()
             for (del_id,) in ids_to_del:
                 conn.execute(text(
                     "UPDATE transacoes SET subcategoria_id = :kid WHERE subcategoria_id = :did"
@@ -303,9 +304,11 @@ def init_db():
             "ALTER TABLE categorias DROP CONSTRAINT IF EXISTS categorias_nome_user_uq",
             "ALTER TABLE categorias DROP CONSTRAINT IF EXISTS categorias_nome_parent_user_uq",
             "ALTER TABLE categorias ADD CONSTRAINT categorias_nome_user_uq UNIQUE(nome, user_id)",
+            # subcategorias: constraint sem user_id (3FN — user_id será dropado abaixo)
             "ALTER TABLE subcategorias DROP CONSTRAINT IF EXISTS subcategorias_nome_cat_user_uq",
             "ALTER TABLE subcategorias DROP CONSTRAINT IF EXISTS subcategorias_nome_categoria_id_user_id_key",
-            "ALTER TABLE subcategorias ADD CONSTRAINT subcategorias_nome_cat_user_uq UNIQUE(nome, categoria_id, user_id)",
+            "ALTER TABLE subcategorias DROP CONSTRAINT IF EXISTS subcategorias_nome_cat_uq",
+            "ALTER TABLE subcategorias ADD CONSTRAINT subcategorias_nome_cat_uq UNIQUE(nome, categoria_id)",
         ]:
             try:
                 with engine.begin() as _conn:
@@ -313,43 +316,77 @@ def init_db():
             except Exception:
                 pass
 
-    # ── Migração: move subcategorias de categorias → subcategorias ───────────
-    with engine.begin() as conn:
-        rows = conn.execute(text(
-            "SELECT id, nome, cor, natureza, parent_id, user_id "
-            "FROM categorias WHERE parent_id IS NOT NULL"
-        )).fetchall()
-        for row in rows:
-            old_id, nome, cor, nat, parent_id, uid = row
-            existing = conn.execute(text(
-                "SELECT id FROM subcategorias WHERE nome = :n AND categoria_id = :cid AND user_id = :uid"
-            ), {"n": nome, "cid": parent_id, "uid": uid}).fetchone()
-            if not existing:
-                if engine.dialect.name == "sqlite":
+    # ── Migração: move subcategorias de categorias.parent_id → tabela subcategorias
+    # Roda antes de dropar parent_id. Wrapped em try/except: já foi executada na maioria dos DBs.
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(text(
+                "SELECT id, nome, cor, natureza, parent_id, user_id "
+                "FROM categorias WHERE parent_id IS NOT NULL"
+            )).fetchall()
+            for row in rows:
+                old_id, nome, cor, nat, parent_id, uid = row
+                existing = conn.execute(text(
+                    "SELECT id FROM subcategorias WHERE nome = :n AND categoria_id = :cid"
+                ), {"n": nome, "cid": parent_id}).fetchone()
+                if not existing:
+                    if engine.dialect.name == "sqlite":
+                        conn.execute(text(
+                            "INSERT INTO subcategorias (nome, cor, natureza, categoria_id) "
+                            "VALUES (:n, :cor, :nat, :cid)"
+                        ), {"n": nome, "cor": cor or "#888888", "nat": nat or "nao_classificado",
+                            "cid": parent_id})
+                        new_id = conn.execute(text("SELECT last_insert_rowid()")).scalar()
+                    else:
+                        new_id = conn.execute(text(
+                            "INSERT INTO subcategorias (nome, cor, natureza, categoria_id) "
+                            "VALUES (:n, :cor, :nat, :cid) RETURNING id"
+                        ), {"n": nome, "cor": cor or "#888888", "nat": nat or "nao_classificado",
+                            "cid": parent_id}).scalar()
                     conn.execute(text(
-                        "INSERT INTO subcategorias (nome, cor, natureza, categoria_id, user_id) "
-                        "VALUES (:n, :cor, :nat, :cid, :uid)"
-                    ), {"n": nome, "cor": cor or "#888888", "nat": nat or "nao_classificado",
-                        "cid": parent_id, "uid": uid})
-                    new_id = conn.execute(text("SELECT last_insert_rowid()")).scalar()
+                        "UPDATE transacoes SET categoria_id = :pid, subcategoria_id = :sid "
+                        "WHERE categoria_id = :oid"
+                    ), {"pid": parent_id, "sid": new_id, "oid": old_id})
                 else:
-                    new_id = conn.execute(text(
-                        "INSERT INTO subcategorias (nome, cor, natureza, categoria_id, user_id) "
-                        "VALUES (:n, :cor, :nat, :cid, :uid) RETURNING id"
-                    ), {"n": nome, "cor": cor or "#888888", "nat": nat or "nao_classificado",
-                        "cid": parent_id, "uid": uid}).scalar()
-                conn.execute(text(
-                    "UPDATE transacoes SET categoria_id = :pid, subcategoria_id = :sid "
-                    "WHERE categoria_id = :oid"
-                ), {"pid": parent_id, "sid": new_id, "oid": old_id})
-            else:
-                new_id = existing[0]
-                conn.execute(text(
-                    "UPDATE transacoes SET categoria_id = :pid, subcategoria_id = :sid "
-                    "WHERE categoria_id = :oid"
-                ), {"pid": parent_id, "sid": new_id, "oid": old_id})
-        if rows:
-            conn.execute(text("DELETE FROM categorias WHERE parent_id IS NOT NULL"))
+                    new_id = existing[0]
+                    conn.execute(text(
+                        "UPDATE transacoes SET categoria_id = :pid, subcategoria_id = :sid "
+                        "WHERE categoria_id = :oid"
+                    ), {"pid": parent_id, "sid": new_id, "oid": old_id})
+            if rows:
+                conn.execute(text("DELETE FROM categorias WHERE parent_id IS NOT NULL"))
+    except Exception:
+        pass  # parent_id já foi dropado em execução anterior
+
+    # ── 3FN: remove colunas com dependências transitivas ─────────────────────
+    # Deve rodar APÓS todos os blocos de migração de dados acima.
+    _3fn_ddl = [
+        # subcategorias.user_id → derivável via categoria_id → categorias.user_id
+        "ALTER TABLE subcategorias DROP COLUMN user_id",
+        # categorias.parent_id → legado, dados já na tabela subcategorias
+        "ALTER TABLE categorias DROP COLUMN parent_id",
+        # parcelamentos.valor_parcela → derivável: valor_total / total_parcelas
+        "ALTER TABLE parcelamentos DROP COLUMN valor_parcela",
+    ]
+    for ddl in _3fn_ddl:
+        try:
+            with engine.begin() as _conn:
+                _conn.execute(text(ddl))
+        except Exception:
+            pass  # coluna já foi dropada
+
+    # ── Backfill orcamentos.user_id a partir de categorias ───────────────────
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                UPDATE orcamentos
+                SET user_id = (
+                    SELECT c.user_id FROM categorias c WHERE c.id = orcamentos.categoria_id
+                )
+                WHERE user_id = 'default'
+            """))
+    except Exception:
+        pass
 
     # ── Categorias padrão para o usuário 'default' (banco local/legado) ───────
     with engine.begin() as conn:

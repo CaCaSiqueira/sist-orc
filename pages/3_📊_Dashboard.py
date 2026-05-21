@@ -197,9 +197,10 @@ else:
     df_ativos  = df_parc[df_parc["parcelas_pagas"] < df_parc["total_parcelas"]].copy()
 
     p1, p2, p3, p4 = st.columns(4)
-    comprometido_mes = df_ativos["valor_parcela"].sum() if not df_ativos.empty else 0
-    total_restante   = ((df_ativos["total_parcelas"] - df_ativos["parcelas_pagas"]) * df_ativos["valor_parcela"]).sum() if not df_ativos.empty else 0
-    total_pago       = (df_parc["parcelas_pagas"] * df_parc["valor_parcela"]).sum()
+    vp_ativos        = df_ativos["valor_total"] / df_ativos["total_parcelas"] if not df_ativos.empty else 0
+    comprometido_mes = vp_ativos.sum() if not df_ativos.empty else 0
+    total_restante   = ((df_ativos["total_parcelas"] - df_ativos["parcelas_pagas"]) * vp_ativos).sum() if not df_ativos.empty else 0
+    total_pago       = (df_parc["parcelas_pagas"] * df_parc["valor_total"] / df_parc["total_parcelas"]).sum()
     p1.metric("Ativos", len(df_ativos))
     p2.metric("Comprometido/mês", fmt(comprometido_mes))
     p3.metric("Restante a pagar", fmt(total_restante))
@@ -220,8 +221,9 @@ else:
 
     with col_dir:
         if not df_ativos.empty:
-            df_ativos["pago"]     = df_ativos["parcelas_pagas"] * df_ativos["valor_parcela"]
-            df_ativos["restante"] = (df_ativos["total_parcelas"] - df_ativos["parcelas_pagas"]) * df_ativos["valor_parcela"]
+            _vp = df_ativos["valor_total"] / df_ativos["total_parcelas"]
+            df_ativos["pago"]     = df_ativos["parcelas_pagas"] * _vp
+            df_ativos["restante"] = (df_ativos["total_parcelas"] - df_ativos["parcelas_pagas"]) * _vp
             fig_prog = go.Figure()
             fig_prog.add_trace(go.Bar(
                 name="Pago", y=df_ativos["descricao"], x=df_ativos["pago"],

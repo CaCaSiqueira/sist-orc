@@ -116,11 +116,12 @@ def listar_categorias(tipo=None, user_id=_UID):
 
 
 def _listar_subcategorias_df(tipo=None, user_id=_UID):
+    # user_id agora filtrado via JOIN com categorias (3FN: user_id removido de subcategorias)
     sql = """
         SELECT s.id, s.nome, s.cor, s.natureza, s.categoria_id, c.tipo
         FROM subcategorias s
         JOIN categorias c ON s.categoria_id = c.id
-        WHERE s.user_id = :uid
+        WHERE c.user_id = :uid
     """
     params = {"uid": user_id}
     if tipo:
@@ -170,16 +171,18 @@ def criar_categoria(nome, tipo, cor="#888888", parent_id=None, natureza="nao_cla
                 {"nome": nome, "tipo": tipo, "cor": cor, "natureza": natureza, "uid": user_id},
             )
         else:
+            # user_id não é armazenado em subcategorias (3FN: derivável via categoria_id)
             _write(
-                "INSERT INTO subcategorias (nome, cor, natureza, categoria_id, user_id) "
-                "VALUES (:nome, :cor, :natureza, :cid, :uid)",
-                {"nome": nome, "cor": cor, "natureza": natureza, "cid": parent_id, "uid": user_id},
+                "INSERT INTO subcategorias (nome, cor, natureza, categoria_id) "
+                "VALUES (:nome, :cor, :natureza, :cid)",
+                {"nome": nome, "cor": cor, "natureza": natureza, "cid": parent_id},
             )
     except IntegrityError:
         if parent_id is None:
             raise ValueError(f"Já existe uma categoria com o nome '{nome}'.")
         else:
             raise ValueError(f"Já existe uma subcategoria com o nome '{nome}' nesta categoria.")
+
 
 
 def editar_categoria(id_, nome, tipo, cor, natureza="nao_classificado", user_id=_UID):
@@ -193,9 +196,11 @@ def editar_categoria(id_, nome, tipo, cor, natureza="nao_classificado", user_id=
 def editar_subcategoria(id_, nome, cor, natureza="nao_classificado", user_id=_UID):
     from sqlalchemy.exc import IntegrityError
     try:
+        # Verifica propriedade via JOIN com categorias (3FN: user_id removido de subcategorias)
         _write(
             "UPDATE subcategorias SET nome = :nome, cor = :cor, natureza = :natureza "
-            "WHERE id = :id AND user_id = :uid",
+            "WHERE id = :id "
+            "AND categoria_id IN (SELECT id FROM categorias WHERE user_id = :uid)",
             {"nome": nome, "cor": cor, "natureza": natureza, "id": id_, "uid": user_id},
         )
     except IntegrityError:
@@ -213,8 +218,9 @@ def excluir_categoria(id_, user_id=_UID):
     _write("UPDATE transacoes SET categoria_id = NULL, subcategoria_id = NULL "
            "WHERE categoria_id = :id AND user_id = :uid",
            {"id": id_, "uid": user_id})
-    _write("DELETE FROM subcategorias WHERE categoria_id = :id AND user_id = :uid",
-           {"id": id_, "uid": user_id})
+    # subcategorias não tem user_id (3FN); a segurança é garantida pela FK de categoria_id
+    _write("DELETE FROM subcategorias WHERE categoria_id = :id",
+           {"id": id_})
     _write("DELETE FROM categorias WHERE id = :id AND user_id = :uid",
            {"id": id_, "uid": user_id})
 
@@ -223,7 +229,9 @@ def excluir_subcategoria(id_, user_id=_UID):
     _write("UPDATE transacoes SET subcategoria_id = NULL "
            "WHERE subcategoria_id = :id AND user_id = :uid",
            {"id": id_, "uid": user_id})
-    _write("DELETE FROM subcategorias WHERE id = :id AND user_id = :uid",
+    # Verifica propriedade via JOIN (3FN: user_id removido de subcategorias)
+    _write("DELETE FROM subcategorias WHERE id = :id "
+           "AND categoria_id IN (SELECT id FROM categorias WHERE user_id = :uid)",
            {"id": id_, "uid": user_id})
 
 
@@ -522,12 +530,14 @@ def evolucao_mensal(data_inicio=None, data_fim=None, user_id=_UID):
 # ── Parcelamentos ─────────────────────────────────────────────────────────────
 
 def criar_parcelamento(dados: dict, user_id=_UID) -> int:
+    # valor_parcela removido (3FN: derivável = valor_total / total_parcelas)
+    dados = {k: v for k, v in dados.items() if k != "valor_parcela"}
     dados = {**dados, "uid": user_id}
     return _insert_returning_id(
         """INSERT INTO parcelamentos
-           (descricao, valor_total, valor_parcela, total_parcelas, parcelas_pagas,
+           (descricao, valor_total, total_parcelas, parcelas_pagas,
             data_primeira_parcela, categoria_id, conta_id, observacao, user_id)
-           VALUES (:descricao, :valor_total, :valor_parcela, :total_parcelas, :parcelas_pagas,
+           VALUES (:descricao, :valor_total, :total_parcelas, :parcelas_pagas,
                    :data_primeira_parcela, :categoria_id, :conta_id, :observacao, :uid)
            RETURNING id""",
         dados,
@@ -573,7 +583,9 @@ def parcelas_a_vencer_por_mes(meses=6, user_id=_UID):
         for i in range(int(p["parcelas_pagas"]), int(p["total_parcelas"])):
             data_parc = inicio + pd.DateOffset(months=i)
             if data_parc.date() >= hoje:
-                rows.append({"mes": data_parc.strftime("%Y-%m"), "total": float(p["valor_parcela"])})
+                # valor_parcela = valor_total / total_parcelas (3FN: coluna removida)
+                vp = float(p["valor_total"]) / int(p["total_parcelas"])
+                rows.append({"mes": data_parc.strftime("%Y-%m"), "total": vp})
 
     if not rows:
         return pd.DataFrame(columns=["mes", "total"])
@@ -659,19 +671,19 @@ def resumo_investimentos(user_id=_UID):
 
 # ── Orçamentos ────────────────────────────────────────────────────────────────
 
-def salvar_orcamento(categoria_id: int, mes: str, valor_limite: float):
+def salvar_orcamento(categoria_id: int, mes: str, valor_limite: float, user_id=_UID):
     _write(
-        """INSERT INTO orcamentos (categoria_id, mes, valor_limite)
-           VALUES (:categoria_id, :mes, :valor_limite)
+        """INSERT INTO orcamentos (categoria_id, mes, valor_limite, user_id)
+           VALUES (:categoria_id, :mes, :valor_limite, :uid)
            ON CONFLICT (categoria_id, mes) DO UPDATE SET valor_limite = EXCLUDED.valor_limite""",
-        {"categoria_id": categoria_id, "mes": mes, "valor_limite": valor_limite},
+        {"categoria_id": categoria_id, "mes": mes, "valor_limite": valor_limite, "uid": user_id},
     )
 
 
-def excluir_orcamento(categoria_id: int, mes: str):
+def excluir_orcamento(categoria_id: int, mes: str, user_id=_UID):
     _write(
-        "DELETE FROM orcamentos WHERE categoria_id = :cat AND mes = :mes",
-        {"cat": categoria_id, "mes": mes},
+        "DELETE FROM orcamentos WHERE categoria_id = :cat AND mes = :mes AND user_id = :uid",
+        {"cat": categoria_id, "mes": mes, "uid": user_id},
     )
 
 

@@ -34,7 +34,7 @@ with col_copy:
             df_orig = listar_orcamentos(mes_origem, user_id=uid)
             copiados = 0
             for _, row in df_orig[df_orig["limite"] > 0].iterrows():
-                salvar_orcamento(int(row["categoria_id"]), mes_sel, float(row["limite"]))
+                salvar_orcamento(int(row["categoria_id"]), mes_sel, float(row["limite"]), user_id=uid)
                 copiados += 1
             if copiados:
                 st.success(f"{copiados} categorias copiadas de {mes_origem}.")
@@ -114,11 +114,11 @@ for _, row in df.iterrows():
             col_s, col_d = st.columns(2)
             if col_s.button("Salvar", key=f"sv_{cat_id}", type="primary"):
                 if novo_limite > 0:
-                    salvar_orcamento(cat_id, mes_sel, novo_limite)
+                    salvar_orcamento(cat_id, mes_sel, novo_limite, user_id=uid)
                 else:
-                    excluir_orcamento(cat_id, mes_sel)
+                    excluir_orcamento(cat_id, mes_sel, user_id=uid)
                 st.rerun()
             if limite_atual > 0 and col_d.button("Remover", key=f"rm_{cat_id}"):
-                excluir_orcamento(cat_id, mes_sel)
+                excluir_orcamento(cat_id, mes_sel, user_id=uid)
                 st.rerun()
     st.divider()

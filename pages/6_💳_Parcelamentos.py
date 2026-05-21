@@ -26,8 +26,9 @@ df_todos  = listar_parcelamentos(apenas_ativos=False, user_id=uid)
 
 # ── KPIs ──────────────────────────────────────────────────────────────────────
 if not df_ativos.empty:
-    total_restante   = (df_ativos["total_parcelas"] - df_ativos["parcelas_pagas"]) * df_ativos["valor_parcela"]
-    compromisso_mes  = df_ativos["valor_parcela"].sum()
+    vp_ativos        = df_ativos["valor_total"] / df_ativos["total_parcelas"]
+    total_restante   = (df_ativos["total_parcelas"] - df_ativos["parcelas_pagas"]) * vp_ativos
+    compromisso_mes  = vp_ativos.sum()
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Parcelamentos ativos", len(df_ativos))
     k2.metric("Comprometido este mês", fmt(compromisso_mes))
@@ -65,9 +66,10 @@ if not df_ativos.empty:
                 st.caption(f"Início: {pd.to_datetime(p['data_primeira_parcela']).strftime('%d/%m/%Y')}")
             with col_prog:
                 st.progress(progresso, text=f"{pagas}/{total} parcelas pagas")
+                vp = p['valor_total'] / p['total_parcelas']
                 st.markdown(
-                    f"Parcela: **{fmt(p['valor_parcela'])}** · "
-                    f"Restante: **{fmt(restantes * p['valor_parcela'])}** · "
+                    f"Parcela: **{fmt(vp)}** · "
+                    f"Restante: **{fmt(restantes * vp)}** · "
                     f"Total: **{fmt(p['valor_total'])}**"
                 )
             with col_acoes:
@@ -139,7 +141,6 @@ with st.form("novo_parcelamento", clear_on_submit=True):
             criar_parcelamento({
                 "descricao":            descricao.strip(),
                 "valor_total":          valor_total,
-                "valor_parcela":        round(valor_parcela, 2),
                 "total_parcelas":       int(total_parcelas),
                 "parcelas_pagas":       int(parcelas_pagas),
                 "data_primeira_parcela": str(data_ini),
