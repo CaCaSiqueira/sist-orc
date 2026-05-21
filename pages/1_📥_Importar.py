@@ -18,26 +18,49 @@ sidebar_user()
 st.title("📥 Importar Extrato")
 
 BANCOS = {
-    "Nubank — Fatura (Cartão de Crédito)": ("nubank",       nubank,        "cartao_credito"),
-    "Nubank — Conta Corrente":             ("nubank",       nubank,        "conta_corrente"),
-    "Mercado Pago":                        ("mercado_pago", mercado_pago,  "carteira_digital"),
-    "Banco do Brasil — Conta Corrente":    ("bb",           banco_brasil,  "conta_corrente"),
-    "Banco do Brasil — Poupança":          ("bb",           banco_brasil,  "poupanca"),
-}
-CONTA_TIPO_LABELS = {
-    "cartao_credito":   "💳 Cartão de Crédito",
-    "conta_corrente":   "🏦 Conta Corrente",
-    "carteira_digital": "📱 Carteira Digital",
-    "poupanca":         "💰 Poupança",
+    "Nubank": {
+        "banco_key": "nubank",
+        "parser":    nubank,
+        "tipos": {
+            "💳 Fatura (Cartão de Crédito)": "cartao_credito",
+            "🏦 Conta Corrente":             "conta_corrente",
+        },
+    },
+    "Mercado Pago": {
+        "banco_key": "mercado_pago",
+        "parser":    mercado_pago,
+        "tipos": {
+            "📱 Carteira Digital": "carteira_digital",
+        },
+    },
+    "Banco do Brasil": {
+        "banco_key": "bb",
+        "parser":    banco_brasil,
+        "tipos": {
+            "🏦 Conta Corrente": "conta_corrente",
+            "💰 Poupança":       "poupanca",
+        },
+    },
 }
 NATUREZA_OPTS   = ["nao_classificado", "fixo", "variavel"]
 NATUREZA_LABELS = {"nao_classificado": "Não classificado", "fixo": "Fixo", "variavel": "Variável"}
 SUB_NONE        = "(nenhuma)"
 
-banco_label = st.selectbox("Banco / Tipo de conta", list(BANCOS.keys()))
-banco_key, parser_mod, conta_tipo_importacao = BANCOS[banco_label]
+# ── Seleção de banco e tipo de conta em campos separados ──────────────────────
+col_banco, col_tipo = st.columns(2)
+banco_nome = col_banco.selectbox("Banco", list(BANCOS.keys()))
+banco_info = BANCOS[banco_nome]
+tipos_disponiveis = banco_info["tipos"]
 
-st.info(f"Tipo de conta: **{CONTA_TIPO_LABELS[conta_tipo_importacao]}**")
+if len(tipos_disponiveis) > 1:
+    tipo_label = col_tipo.selectbox("Tipo de conta", list(tipos_disponiveis.keys()))
+else:
+    tipo_label = list(tipos_disponiveis.keys())[0]
+    col_tipo.info(f"Tipo: **{tipo_label}**")
+
+banco_key           = banco_info["banco_key"]
+parser_mod          = banco_info["parser"]
+conta_tipo_importacao = tipos_disponiveis[tipo_label]
 
 uploaded = st.file_uploader(
     "Selecione o arquivo de extrato",
